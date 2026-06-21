@@ -520,7 +520,7 @@
 
         .form-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr 1fr auto;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 12px;
             align-items: flex-end;
             margin-bottom: 12px;
@@ -1038,12 +1038,22 @@
                                         <input type="text" id="productBarcode" placeholder="EAN-13">
                                     </div>
                                     <div class="form-field">
-                                        <label>Price (৳)</label>
+                                        <label>Unit</label>
+                                        <select id="productUnit" onchange="onUnitChange()">
+                                            <option value="pcs">Piece (pcs)</option>
+                                            <option value="kg">Kilogram (kg)</option>
+                                            <option value="g">Gram (g)</option>
+                                            <option value="l">Litre (l)</option>
+                                            <option value="ml">Millilitre (ml)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label id="productPriceLabel">Price (৳ / pcs)</label>
                                         <input type="number" id="productPrice" placeholder="0.00" step="0.01">
                                     </div>
                                     <div class="form-field">
-                                        <label>Stock</label>
-                                        <input type="number" id="productStock" placeholder="0" value="50">
+                                        <label id="productStockLabel">Stock (pcs)</label>
+                                        <input type="number" id="productStock" placeholder="0" value="50" step="1">
                                     </div>
                                     <div class="form-field">
                                         <label>Icon</label>
@@ -1317,7 +1327,7 @@
                 <input type="text" id="editName" disabled style="background: #f5f5f5;">
             </div>
             <div class="form-field" style="margin-bottom: 16px;">
-                <label>New Price (৳)</label>
+                <label id="editPriceLabel">New Price (৳)</label>
                 <input type="number" id="editPrice" step="0.01">
             </div>
             <div style="display: flex; gap: 8px;">
@@ -1388,12 +1398,12 @@
 
         const DEFAULT_DB = {
             products: [
-                { id: 1, name: 'Tomato', barcode: '8901001001001', price: 60, stock: 50, icon: '🍅' },
-                { id: 2, name: 'Cucumber', barcode: '8901001001002', price: 40, stock: 30, icon: '🥒' },
-                { id: 3, name: 'Onion (1kg)', barcode: '8901001001003', price: 50, stock: 100, icon: '🧅' },
-                { id: 4, name: 'Carrot (1kg)', barcode: '8901001001004', price: 70, stock: 45, icon: '🥕' },
-                { id: 5, name: 'Milk (1L)', barcode: '8901001003001', price: 70, stock: 120, icon: '🥛' },
-                { id: 6, name: 'Banana', barcode: '8901001002002', price: 80, stock: 60, icon: '🍌' },
+                { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', price: 60, stock: 50, icon: '🍅' },
+                { id: 2, name: 'Cucumber', barcode: '8901001001002', unit: 'pcs', price: 40, stock: 30, icon: '🥒' },
+                { id: 3, name: 'Onion', barcode: '8901001001003', unit: 'kg', price: 50, stock: 100, icon: '🧅' },
+                { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', price: 70, stock: 45, icon: '🥕' },
+                { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', price: 70, stock: 120, icon: '🥛' },
+                { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', price: 80, stock: 60, icon: '🍌' },
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
@@ -1430,9 +1440,12 @@
                 const raw = localStorage.getItem(STORAGE_KEY);
                 if (raw) {
                     const saved = JSON.parse(raw);
+                    const products = (saved.products || DEFAULT_DB.products).map(p =>
+                        Object.assign({ unit: 'pcs' }, p)
+                    );
                     // Merge saved data over defaults so new fields added in updates still exist
                     return {
-                        products: saved.products || DEFAULT_DB.products,
+                        products,
                         users: saved.users || DEFAULT_DB.users,
                         sales: saved.sales || [],
                         invoiceCounter: saved.invoiceCounter || 0,
@@ -1611,7 +1624,7 @@
             const text = document.getElementById('lowStockBannerText');
 
             if (lowItems.length > 0) {
-                const names = lowItems.map(p => `${p.icon} ${p.name} (${p.stock})`).join(', ');
+                const names = lowItems.map(p => `${p.icon} ${p.name} (${formatQty(p.stock, p.unit)} ${p.unit})`).join(', ');
                 text.textContent = `Low Stock Alert: ${names}`;
                 banner.classList.remove('hidden-banner');
             } else {
@@ -1832,6 +1845,13 @@
         }
 
         // ===== PRODUCTS =====
+        function formatQty(qty, unit) {
+            if (unit === 'g' || unit === 'ml' || unit === 'pcs') {
+                return (Math.round(qty * 100) / 100).toString();
+            }
+            return qty.toFixed(2);
+        }
+
         function loadProducts() {
             const grid = document.getElementById('productsGrid');
             const searchEl = document.getElementById('productSearchInput');
@@ -1845,8 +1865,8 @@
                 <div class="product-card" onclick="addToCart(${p.id})">
                     <div class="product-icon">${p.icon}</div>
                     <div class="product-name">${p.name}</div>
-                    <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${p.stock}</div>
-                    <div class="product-price">৳ ${p.price.toFixed(2)}</div>
+                    <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
+                    <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
                 </div>
             `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
@@ -1858,9 +1878,9 @@
                     <td>${p.icon}</td>
                     <td>${p.name}</td>
                     <td style="font-family: monospace; font-size: 11px;">${p.barcode}</td>
-                    <td>৳ ${p.price.toFixed(2)}</td>
+                    <td>৳ ${p.price.toFixed(2)} / ${p.unit}</td>
                     <td>
-                        ${p.stock}
+                        ${formatQty(p.stock, p.unit)} ${p.unit}
                         ${hasPerm('edit_stock') ? `<button class="btn-edit" style="margin-left:6px;" onclick="editStock(${p.id})"><i class="fas fa-boxes"></i></button>` : ''}
                     </td>
                     <td>
@@ -1996,6 +2016,18 @@
             document.getElementById('emojiPickerPanel').classList.add('hidden-banner');
         }
 
+        function isWeightUnit(unit) {
+            return unit === 'kg' || unit === 'g' || unit === 'l' || unit === 'ml';
+        }
+
+        function onUnitChange() {
+            const unit = document.getElementById('productUnit').value;
+            document.getElementById('productPriceLabel').textContent = `Price (৳ / ${unit})`;
+            document.getElementById('productStockLabel').textContent = `Stock (${unit})`;
+            const stockInput = document.getElementById('productStock');
+            stockInput.step = isWeightUnit(unit) ? '0.01' : '1';
+        }
+
         function addProduct() {
             if (!hasPerm('add_product')) {
                 alert('You don\'t have permission to add products');
@@ -2004,8 +2036,9 @@
 
             const name = document.getElementById('productName').value;
             const barcode = document.getElementById('productBarcode').value;
+            const unit = document.getElementById('productUnit').value;
             const price = parseFloat(document.getElementById('productPrice').value);
-            const stock = parseInt(document.getElementById('productStock').value);
+            const stock = parseFloat(document.getElementById('productStock').value);
             const icon = document.getElementById('productIcon').value || '📦';
 
             if (!name || !barcode || !price) {
@@ -2019,10 +2052,12 @@
             }
 
             const newId = DB.products.length ? Math.max(...DB.products.map(p => p.id)) + 1 : 1;
-            DB.products.push({ id: newId, name, barcode, price, stock, icon });
+            DB.products.push({ id: newId, name, barcode, unit, price, stock, icon });
 
             document.getElementById('productName').value = '';
             document.getElementById('productBarcode').value = '';
+            document.getElementById('productUnit').value = 'pcs';
+            onUnitChange();
             document.getElementById('productPrice').value = '';
             document.getElementById('productStock').value = '50';
             document.getElementById('productIcon').value = '📦';
@@ -2051,6 +2086,7 @@
             editingProductId = productId;
             document.getElementById('editName').value = product.name;
             document.getElementById('editPrice').value = product.price;
+            document.getElementById('editPriceLabel').textContent = `New Price (৳ / ${product.unit || 'pcs'})`;
             document.getElementById('editModal').classList.add('active');
             document.getElementById('editPrice').focus();
         }
@@ -2084,17 +2120,17 @@
                 return;
             }
             const product = DB.products.find(p => p.id === productId);
-            const newStock = prompt(`Set new stock quantity for "${product.name}":`, product.stock);
+            const newStock = prompt(`Set new stock quantity for "${product.name}" (${product.unit}):`, product.stock);
             if (newStock === null) return;
-            const val = parseInt(newStock);
+            const val = parseFloat(newStock);
             if (isNaN(val) || val < 0) { alert('Enter a valid stock number'); return; }
             const oldStock = product.stock;
-            product.stock = val;
+            product.stock = Math.round(val * 1000) / 1000;
             loadProducts();
             loadProductsTable();
             loadReports();
             checkLowStock();
-            logAudit('stock_changed', `"${product.name}" stock changed ${oldStock} → ${val}`);
+            logAudit('stock_changed', `"${product.name}" stock changed ${oldStock} → ${product.stock} ${product.unit}`);
             saveDB();
         }
 
@@ -2242,6 +2278,18 @@
         }
 
         // CART
+        function getQtyStep(unit) {
+            if (unit === 'kg' || unit === 'l') return 0.5;
+            if (unit === 'g' || unit === 'ml') return 50;
+            return 1; // pcs
+        }
+
+        function getMinQty(unit) {
+            if (unit === 'kg' || unit === 'l') return 0.05;
+            if (unit === 'g' || unit === 'ml') return 1;
+            return 1; // pcs
+        }
+
         function addToCart(productId) {
             if (!hasPerm('pos')) {
                 alert('POS access denied');
@@ -2256,9 +2304,9 @@
 
             const existing = cart.find(item => item.id === productId);
             if (existing) {
-                existing.quantity++;
+                existing.quantity = Math.round((existing.quantity + getQtyStep(product.unit)) * 1000) / 1000;
             } else {
-                cart.push({ ...product, quantity: 1 });
+                cart.push({ ...product, quantity: getQtyStep(product.unit) });
             }
             updateCart();
         }
@@ -2272,13 +2320,15 @@
                 return;
             }
 
-            cartDiv.innerHTML = cart.map((item, index) => `
+            cartDiv.innerHTML = cart.map((item, index) => {
+                const isWeight = isWeightUnit(item.unit);
+                return `
                 <div class="cart-item">
                     <div class="cart-item-left">
-                        <div class="cart-item-name">${item.icon} ${item.name}</div>
+                        <div class="cart-item-name">${item.icon} ${item.name} <span style="color:#999; font-size:10px;">(${item.unit})</span></div>
                         <div class="cart-item-qty">
                             <button class="qty-btn" onclick="updateQty(${index}, -1)">−</button>
-                            <input type="number" class="qty-input" value="${item.quantity}" onchange="setQty(${index}, this.value)">
+                            <input type="number" class="qty-input" style="${isWeight ? 'width:50px;' : ''}" step="${isWeight ? '0.01' : '1'}" min="${getMinQty(item.unit)}" value="${item.quantity}" onchange="setQty(${index}, this.value)">
                             <button class="qty-btn" onclick="updateQty(${index}, 1)">+</button>
                         </div>
                     </div>
@@ -2287,17 +2337,24 @@
                         <button class="btn-remove" onclick="removeItem(${index})">✕</button>
                     </div>
                 </div>
-            `).join('');
+            `}).join('');
             updateTotals();
         }
 
-        function updateQty(index, change) {
-            cart[index].quantity = Math.max(1, cart[index].quantity + change);
+        function updateQty(index, direction) {
+            const item = cart[index];
+            const step = getQtyStep(item.unit);
+            const min = getMinQty(item.unit);
+            const newQty = item.quantity + (direction * step);
+            item.quantity = Math.max(min, Math.round(newQty * 1000) / 1000);
             updateCart();
         }
 
         function setQty(index, value) {
-            cart[index].quantity = Math.max(1, parseInt(value) || 1);
+            const item = cart[index];
+            const min = getMinQty(item.unit);
+            const parsed = parseFloat(value);
+            item.quantity = Math.max(min, isNaN(parsed) ? min : Math.round(parsed * 1000) / 1000);
             updateCart();
         }
 
@@ -2365,9 +2422,17 @@
                 return;
             }
 
+            for (const item of cart) {
+                const product = DB.products.find(p => p.id === item.id);
+                if (product && item.quantity > product.stock + 0.0001) {
+                    alert(`Not enough stock for "${item.name}". Available: ${formatQty(product.stock, product.unit)} ${product.unit}`);
+                    return;
+                }
+            }
+
             cart.forEach(item => {
                 const product = DB.products.find(p => p.id === item.id);
-                if (product) product.stock -= item.quantity;
+                if (product) product.stock = Math.round((product.stock - item.quantity) * 1000) / 1000;
             });
 
             DB.invoiceCounter = (DB.invoiceCounter || 0) + 1;
@@ -2377,7 +2442,7 @@
                 id: Date.now(),
                 invoiceNo,
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity, returnedQty: 0 })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity, returnedQty: 0 })),
                 subtotal,
                 discountAmount,
                 amount: total,
@@ -2418,7 +2483,7 @@
             const draftSale = {
                 invoiceNo: 'DRAFT',
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity })),
                 subtotal,
                 discountAmount,
                 amount: total,
@@ -2440,8 +2505,8 @@
 
             const itemsHtml = sale.items.map(i => `
                 <tr>
-                    <td>${i.icon || ''} ${i.name}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${i.returnedQty} returned)</span>` : ''}</td>
-                    <td class="num">${i.quantity}</td>
+                    <td>${i.icon || ''} ${i.name}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${formatQty(i.returnedQty, i.unit || 'pcs')} ${i.unit || 'pcs'} returned)</span>` : ''}</td>
+                    <td class="num">${formatQty(i.quantity, i.unit || 'pcs')} ${i.unit || 'pcs'}</td>
                     <td class="num">${i.price.toFixed(2)}</td>
                     <td class="num">${(i.price * i.quantity).toFixed(2)}</td>
                 </tr>
@@ -2555,7 +2620,7 @@
                 return `
                 <tr>
                     <td style="font-size: 11px;">${s.date}${statusTag}</td>
-                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${i.quantity}`).join(', ')}</td>
+                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}</td>
                     <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
@@ -2570,7 +2635,7 @@
             stockTbody.innerHTML = DB.products.map(p => `
                 <tr>
                     <td>${p.icon} ${p.name}</td>
-                    <td><strong>${p.stock}</strong></td>
+                    <td><strong>${formatQty(p.stock, p.unit)} ${p.unit}</strong></td>
                     <td>${p.stock <= DB.settings.lowStockThreshold ? '<span style="color: #e74c3c;">⚠ Low</span>' : '<span style="color: #27ae60;">✓ OK</span>'}</td>
                 </tr>
             `).join('');
@@ -2612,14 +2677,16 @@
             document.getElementById('cashOnlyAmount').value = '';
 
             const rows = sale.items.map((item, idx) => {
+                const unit = item.unit || 'pcs';
                 const alreadyReturned = item.returnedQty || 0;
                 const remainingQty = item.quantity - alreadyReturned;
+                const isWeight = isWeightUnit(unit);
                 return `
                     <div class="return-item-row">
-                        <span>${item.icon || ''} ${item.name}<br><span style="color:#999;">৳${item.price.toFixed(2)} each${alreadyReturned ? ` · ${alreadyReturned} already returned` : ''}</span></span>
-                        <span style="text-align:center;">x${item.quantity}</span>
-                        <input type="number" id="returnQty_${idx}" min="0" max="${remainingQty}" value="0" onchange="updateReturnSummary()" oninput="updateReturnSummary()">
-                        <span style="text-align:right;">of ${remainingQty} left</span>
+                        <span>${item.icon || ''} ${item.name}<br><span style="color:#999;">৳${item.price.toFixed(2)} / ${unit}${alreadyReturned ? ` · ${formatQty(alreadyReturned, unit)} ${unit} already returned` : ''}</span></span>
+                        <span style="text-align:center;">${formatQty(item.quantity, unit)} ${unit}</span>
+                        <input type="number" id="returnQty_${idx}" min="0" max="${remainingQty}" step="${isWeight ? '0.01' : '1'}" value="0" onchange="updateReturnSummary()" oninput="updateReturnSummary()">
+                        <span style="text-align:right;">of ${formatQty(remainingQty, unit)} left</span>
                     </div>
                 `;
             }).join('');
@@ -2653,13 +2720,13 @@
             let totalQty = 0;
             sale.items.forEach((item, idx) => {
                 const el = document.getElementById(`returnQty_${idx}`);
-                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                const qty = el ? Math.max(0, parseFloat(el.value) || 0) : 0;
                 refundTotal += qty * item.price;
                 totalQty += qty;
             });
 
             box.innerHTML = totalQty > 0
-                ? `<strong>Returning ${totalQty} item(s)</strong> · Refund amount: ৳ ${refundTotal.toFixed(2)} · Stock will be restored for returned quantities.`
+                ? `<strong>Returning ${totalQty} unit(s) total</strong> · Refund amount: ৳ ${refundTotal.toFixed(2)} · Stock will be restored for returned quantities.`
                 : `Select quantities above to calculate refund, or use the cash-only adjustment.`;
         }
 
@@ -2694,15 +2761,16 @@
             // First pass: validate every requested quantity before changing any state
             const requestedQtys = sale.items.map((item, idx) => {
                 const el = document.getElementById(`returnQty_${idx}`);
-                return el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                const raw = el ? Math.max(0, parseFloat(el.value) || 0) : 0;
+                return Math.round(raw * 1000) / 1000;
             });
 
             for (let idx = 0; idx < sale.items.length; idx++) {
                 const item = sale.items[idx];
                 const qty = requestedQtys[idx];
                 const remainingQty = item.quantity - (item.returnedQty || 0);
-                if (qty > remainingQty) {
-                    alert(`Cannot return more than ${remainingQty} of "${item.name}"`);
+                if (qty > remainingQty + 0.0001) {
+                    alert(`Cannot return more than ${formatQty(remainingQty, item.unit || 'pcs')} ${item.unit || 'pcs'} of "${item.name}"`);
                     return;
                 }
             }
@@ -2711,14 +2779,15 @@
             sale.items.forEach((item, idx) => {
                 const qty = requestedQtys[idx];
                 if (qty > 0) {
-                    item.returnedQty = (item.returnedQty || 0) + qty;
+                    const unit = item.unit || 'pcs';
+                    item.returnedQty = Math.round(((item.returnedQty || 0) + qty) * 1000) / 1000;
                     refundTotal += qty * item.price;
                     totalQty += qty;
-                    returnedDetails.push(`${item.name} x${qty}`);
+                    returnedDetails.push(`${item.name} x${formatQty(qty, unit)}${unit}`);
 
                     // Restore stock for the physically returned quantity
                     const product = DB.products.find(p => p.id === item.id) || DB.products.find(p => p.name === item.name);
-                    if (product) product.stock += qty;
+                    if (product) product.stock = Math.round((product.stock + qty) * 1000) / 1000;
                 }
             });
 
@@ -2897,7 +2966,7 @@
                 rows.push([
                     s.invoiceNo,
                     s.date,
-                    s.items.map(i => `${i.name} x${i.quantity}`).join('; '),
+                    s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join('; '),
                     (s.subtotal ?? s.amount).toFixed(2),
                     (s.discountAmount || 0).toFixed(2),
                     s.amount.toFixed(2),
@@ -2912,13 +2981,14 @@
         }
 
         function exportStockCSV() {
-            const rows = [['Name', 'Barcode', 'Price', 'Stock', 'Status']];
+            const rows = [['Name', 'Barcode', 'Unit', 'Price', 'Stock', 'Status']];
             DB.products.forEach(p => {
                 rows.push([
                     p.name,
                     p.barcode,
+                    p.unit,
                     p.price.toFixed(2),
-                    p.stock,
+                    formatQty(p.stock, p.unit),
                     p.stock <= DB.settings.lowStockThreshold ? 'Low Stock' : 'OK'
                 ]);
             });
