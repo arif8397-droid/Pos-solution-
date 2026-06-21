@@ -784,6 +784,34 @@
 
         .emoji-suggest-chip:hover { background: #fdeecb; }
 
+        /* RETURNS / REFUND MODAL */
+        .return-item-row {
+            display: grid;
+            grid-template-columns: 1fr 70px 90px 90px;
+            gap: 8px;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 12px;
+        }
+
+        .return-item-row input[type="number"] {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #d0d0d0;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+
+        .return-summary-box {
+            background: #fff8ec;
+            border: 1px solid #BA7517;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
         /* INVOICE PREVIEW MODAL */
         .invoice-modal-content {
             background: white;
@@ -1310,6 +1338,37 @@
                 </div>
             </div>
             <div class="invoice-paper" id="invoicePaper"></div>
+        </div>
+    </div>
+
+    <!-- RETURN / REFUND MODAL -->
+    <div id="returnModal" class="modal">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-undo"></i> Process Return / Refund</h2>
+                <button class="close-modal" onclick="closeReturnModal()">✕</button>
+            </div>
+            <div style="font-size:12px; color:#666; margin-bottom:10px;">
+                Select how many units of each item are being physically returned. Stock is restored only for returned quantities. Use the cash-only adjustment below for refunds with no item return (damaged goods, goodwill, pricing error).
+            </div>
+            <div id="returnItemsList"></div>
+            <div style="margin-top:12px;">
+                <label style="font-size:12px; display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="cashOnlyRefundToggle" onchange="toggleCashOnlyRefund()">
+                    Cash-only adjustment (no item returned, do not restock)
+                </label>
+            </div>
+            <div id="cashOnlyAmountField" style="display:none; margin-top:8px;">
+                <div class="form-field">
+                    <label>Refund Amount (৳)</label>
+                    <input type="number" id="cashOnlyAmount" min="0" step="0.01">
+                </div>
+            </div>
+            <div class="return-summary-box" id="returnSummaryBox"></div>
+            <div style="display: flex; gap: 8px; margin-top:14px;">
+                <button class="btn-action btn-checkout" style="flex:1;" onclick="confirmReturn()">Confirm Refund</button>
+                <button class="btn-action btn-secondary" style="flex:1;" onclick="closeReturnModal()">Cancel</button>
+            </div>
         </div>
     </div>
 
@@ -2318,7 +2377,7 @@
                 id: Date.now(),
                 invoiceNo,
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity, returnedQty: 0 })),
                 subtotal,
                 discountAmount,
                 amount: total,
@@ -2381,7 +2440,7 @@
 
             const itemsHtml = sale.items.map(i => `
                 <tr>
-                    <td>${i.icon || ''} ${i.name}</td>
+                    <td>${i.icon || ''} ${i.name}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${i.returnedQty} returned)</span>` : ''}</td>
                     <td class="num">${i.quantity}</td>
                     <td class="num">${i.price.toFixed(2)}</td>
                     <td class="num">${(i.price * i.quantity).toFixed(2)}</td>
@@ -2539,51 +2598,151 @@
         }
 
         // ===== RETURNS / REFUNDS =====
+        // ===== RETURNS / REFUNDS (item-level) =====
+        let returnEditingSaleId = null;
+
         function openRefundDialog(saleId) {
             if (!hasPerm('process_refund')) { alert('Permission denied'); return; }
             const sale = DB.sales.find(s => s.id === saleId);
             if (!sale) return;
 
-            const remaining = sale.amount - (sale.refundedAmount || 0);
-            const choice = confirm(
-                `Refund for ${sale.invoiceNo}\nSale Total: ৳${sale.amount.toFixed(2)}\nAlready refunded: ৳${(sale.refundedAmount||0).toFixed(2)}\nRemaining refundable: ৳${remaining.toFixed(2)}\n\nClick OK for FULL refund, or Cancel to enter a PARTIAL amount.`
-            );
+            returnEditingSaleId = saleId;
+            document.getElementById('cashOnlyRefundToggle').checked = false;
+            document.getElementById('cashOnlyAmountField').style.display = 'none';
+            document.getElementById('cashOnlyAmount').value = '';
 
-            if (choice) {
-                processRefund(saleId, remaining, true);
-            } else {
-                const amountStr = prompt(`Enter partial refund amount (max ৳${remaining.toFixed(2)}):`, remaining.toFixed(2));
-                if (amountStr === null) return;
-                const amount = parseFloat(amountStr);
-                if (isNaN(amount) || amount <= 0 || amount > remaining) {
-                    alert('Invalid refund amount');
-                    return;
-                }
-                processRefund(saleId, amount, false);
-            }
+            const rows = sale.items.map((item, idx) => {
+                const alreadyReturned = item.returnedQty || 0;
+                const remainingQty = item.quantity - alreadyReturned;
+                return `
+                    <div class="return-item-row">
+                        <span>${item.icon || ''} ${item.name}<br><span style="color:#999;">৳${item.price.toFixed(2)} each${alreadyReturned ? ` · ${alreadyReturned} already returned` : ''}</span></span>
+                        <span style="text-align:center;">x${item.quantity}</span>
+                        <input type="number" id="returnQty_${idx}" min="0" max="${remainingQty}" value="0" onchange="updateReturnSummary()" oninput="updateReturnSummary()">
+                        <span style="text-align:right;">of ${remainingQty} left</span>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('returnItemsList').innerHTML = rows;
+            updateReturnSummary();
+            document.getElementById('returnModal').classList.add('active');
         }
 
-        function processRefund(saleId, amount, restoreStock) {
-            const sale = DB.sales.find(s => s.id === saleId);
+        function toggleCashOnlyRefund() {
+            const isCashOnly = document.getElementById('cashOnlyRefundToggle').checked;
+            document.getElementById('cashOnlyAmountField').style.display = isCashOnly ? 'block' : 'none';
+            document.getElementById('returnItemsList').style.opacity = isCashOnly ? '0.4' : '1';
+            document.querySelectorAll('#returnItemsList input').forEach(inp => inp.disabled = isCashOnly);
+            updateReturnSummary();
+        }
+
+        function updateReturnSummary() {
+            const sale = DB.sales.find(s => s.id === returnEditingSaleId);
+            if (!sale) return;
+            const isCashOnly = document.getElementById('cashOnlyRefundToggle').checked;
+            const box = document.getElementById('returnSummaryBox');
+
+            if (isCashOnly) {
+                const amount = parseFloat(document.getElementById('cashOnlyAmount').value) || 0;
+                box.innerHTML = `<strong>Cash-only refund:</strong> ৳ ${amount.toFixed(2)} — no stock will be restored.`;
+                return;
+            }
+
+            let refundTotal = 0;
+            let totalQty = 0;
+            sale.items.forEach((item, idx) => {
+                const el = document.getElementById(`returnQty_${idx}`);
+                const qty = el ? Math.max(0, parseInt(el.value) || 0) : 0;
+                refundTotal += qty * item.price;
+                totalQty += qty;
+            });
+
+            box.innerHTML = totalQty > 0
+                ? `<strong>Returning ${totalQty} item(s)</strong> · Refund amount: ৳ ${refundTotal.toFixed(2)} · Stock will be restored for returned quantities.`
+                : `Select quantities above to calculate refund, or use the cash-only adjustment.`;
+        }
+
+        function confirmReturn() {
+            const sale = DB.sales.find(s => s.id === returnEditingSaleId);
             if (!sale) return;
 
-            sale.refundedAmount = (sale.refundedAmount || 0) + amount;
-            sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
+            const isCashOnly = document.getElementById('cashOnlyRefundToggle').checked;
 
-            if (restoreStock) {
-                sale.items.forEach(item => {
-                    const product = DB.products.find(p => p.id === item.id || p.name === item.name);
-                    if (product) product.stock += item.quantity;
-                });
+            if (isCashOnly) {
+                const amount = parseFloat(document.getElementById('cashOnlyAmount').value) || 0;
+                const remaining = sale.amount - (sale.refundedAmount || 0);
+                if (amount <= 0 || amount > remaining) {
+                    alert(`Enter a valid amount up to ৳${remaining.toFixed(2)}`);
+                    return;
+                }
+                sale.refundedAmount = (sale.refundedAmount || 0) + amount;
+                sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
+
+                loadReports();
+                logAudit('refund_processed', `${sale.invoiceNo}: cash-only refund ৳${amount.toFixed(2)} (no stock change)`);
+                saveDB();
+                alert(`✓ Cash-only refund of ৳${amount.toFixed(2)} processed. Stock was not changed.`);
+                closeReturnModal();
+                return;
             }
+
+            let refundTotal = 0;
+            let totalQty = 0;
+            const returnedDetails = [];
+
+            // First pass: validate every requested quantity before changing any state
+            const requestedQtys = sale.items.map((item, idx) => {
+                const el = document.getElementById(`returnQty_${idx}`);
+                return el ? Math.max(0, parseInt(el.value) || 0) : 0;
+            });
+
+            for (let idx = 0; idx < sale.items.length; idx++) {
+                const item = sale.items[idx];
+                const qty = requestedQtys[idx];
+                const remainingQty = item.quantity - (item.returnedQty || 0);
+                if (qty > remainingQty) {
+                    alert(`Cannot return more than ${remainingQty} of "${item.name}"`);
+                    return;
+                }
+            }
+
+            // Second pass: all quantities valid, now apply the changes
+            sale.items.forEach((item, idx) => {
+                const qty = requestedQtys[idx];
+                if (qty > 0) {
+                    item.returnedQty = (item.returnedQty || 0) + qty;
+                    refundTotal += qty * item.price;
+                    totalQty += qty;
+                    returnedDetails.push(`${item.name} x${qty}`);
+
+                    // Restore stock for the physically returned quantity
+                    const product = DB.products.find(p => p.id === item.id) || DB.products.find(p => p.name === item.name);
+                    if (product) product.stock += qty;
+                }
+            });
+
+            if (totalQty === 0) {
+                alert('Select at least one item quantity to return, or use the cash-only adjustment.');
+                return;
+            }
+
+            sale.refundedAmount = (sale.refundedAmount || 0) + refundTotal;
+            sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
 
             loadReports();
             loadProducts();
             loadProductsTable();
             checkLowStock();
-            logAudit('refund_processed', `${sale.invoiceNo}: refunded ৳${amount.toFixed(2)} (${sale.status})`);
+            logAudit('refund_processed', `${sale.invoiceNo}: returned ${returnedDetails.join(', ')} — refunded ৳${refundTotal.toFixed(2)}, stock restored`);
             saveDB();
-            alert(`✓ Refund of ৳${amount.toFixed(2)} processed for ${sale.invoiceNo}`);
+            alert(`✓ Refund of ৳${refundTotal.toFixed(2)} processed. Stock restored for ${totalQty} item(s).`);
+            closeReturnModal();
+        }
+
+        function closeReturnModal() {
+            document.getElementById('returnModal').classList.remove('active');
+            returnEditingSaleId = null;
         }
 
         // ===== AUDIT LOG =====
