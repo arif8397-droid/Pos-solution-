@@ -1047,6 +1047,13 @@
                                             <option value="ml">Millilitre (ml)</option>
                                         </select>
                                     </div>
+                                    <div class="form-field" id="sellModeField" style="display:none;">
+                                        <label>Sold As</label>
+                                        <select id="productSellMode">
+                                            <option value="loose">Loose — weighed per customer at counter</option>
+                                            <option value="prepacked">Pre-packed — fixed sealed package</option>
+                                        </select>
+                                    </div>
                                     <div class="form-field">
                                         <label id="productPriceLabel">Price (৳ / pcs)</label>
                                         <input type="number" id="productPrice" placeholder="0.00" step="0.01">
@@ -1306,7 +1313,11 @@
 
                         <!-- Audit Log -->
                         <div class="admin-card" style="grid-column: 1 / -1;">
-                            <h4><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(last 50 actions)</span></h4>
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                                <h4 style="margin-bottom:0; border-bottom:none; padding-bottom:0;"><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(showing last 50 · retained 1 year)</span></h4>
+                                <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log (Excel)</button>
+                            </div>
+                            <div style="border-bottom: 2px solid #BA7517; margin: 10px 0 14px;"></div>
                             <div id="auditLogBody" style="max-height: 280px; overflow-y: auto; font-size: 12px;"></div>
                         </div>
                     </div>
@@ -1418,12 +1429,12 @@
 
         const DEFAULT_DB = {
             products: [
-                { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', price: 60, stock: 50, icon: '🍅' },
-                { id: 2, name: 'Cucumber', barcode: '8901001001002', unit: 'pcs', price: 40, stock: 30, icon: '🥒' },
-                { id: 3, name: 'Onion', barcode: '8901001001003', unit: 'kg', price: 50, stock: 100, icon: '🧅' },
-                { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', price: 70, stock: 45, icon: '🥕' },
-                { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', price: 70, stock: 120, icon: '🥛' },
-                { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', price: 80, stock: 60, icon: '🍌' },
+                { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', sellMode: 'loose', price: 60, stock: 50, icon: '🍅' },
+                { id: 2, name: 'Cucumber', barcode: '8901001001002', unit: 'pcs', sellMode: 'prepacked', price: 40, stock: 30, icon: '🥒' },
+                { id: 3, name: 'Onion', barcode: '8901001001003', unit: 'kg', sellMode: 'loose', price: 50, stock: 100, icon: '🧅' },
+                { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', sellMode: 'loose', price: 70, stock: 45, icon: '🥕' },
+                { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', sellMode: 'prepacked', price: 70, stock: 120, icon: '🥛' },
+                { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', sellMode: 'prepacked', price: 80, stock: 60, icon: '🍌' },
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
@@ -1461,7 +1472,7 @@
                 if (raw) {
                     const saved = JSON.parse(raw);
                     const products = (saved.products || DEFAULT_DB.products).map(p =>
-                        Object.assign({ unit: 'pcs' }, p)
+                        Object.assign({ unit: 'pcs', sellMode: 'loose' }, p)
                     );
                     // Merge saved data over defaults so new fields added in updates still exist
                     return {
@@ -1496,17 +1507,31 @@
             }
         }
 
+        const AUDIT_LOG_RETENTION_DAYS = 365;
+
         function logAudit(action, details) {
+            const now = Date.now();
             DB.auditLog.push({
-                id: Date.now() + Math.random(),
-                time: new Date().toLocaleString(),
+                id: now + Math.random(),
+                timestamp: now,
+                time: new Date(now).toLocaleString(),
                 user: DB.currentUser ? DB.currentUser.id : 'system',
                 action,
                 details
             });
-            // Keep the log from growing unbounded
-            if (DB.auditLog.length > 500) DB.auditLog = DB.auditLog.slice(-500);
+            pruneAuditLog();
             saveDB();
+        }
+
+        function pruneAuditLog() {
+            const cutoff = Date.now() - (AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+            const now = Date.now();
+            // Backfill missing timestamps (entries logged before this field existed) to "now"
+            // rather than treating them as infinitely old and deleting them immediately.
+            DB.auditLog.forEach(entry => {
+                if (!entry.timestamp) entry.timestamp = now;
+            });
+            DB.auditLog = DB.auditLog.filter(entry => entry.timestamp >= cutoff);
         }
 
         const DB = loadDB();
@@ -1538,6 +1563,9 @@
         }
 
         function initializeApp() {
+            pruneAuditLog();
+            saveDB();
+
             document.getElementById('currentUser').textContent = (DB.currentUser.name || DB.currentUser.id).toUpperCase();
             document.getElementById('currentRole').textContent = DB.currentUser.role.toUpperCase();
 
@@ -1887,7 +1915,7 @@
                     <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
-                    ${isWeightUnit(p.unit) ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                    ${isWeightUnit(p.unit) && p.sellMode === 'loose' ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                 </div>
             `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
@@ -1907,7 +1935,7 @@
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
                         <button class="btn-edit" onclick="printBarcodeLabel(${p.id})"><i class="fas fa-barcode"></i> Label</button>
-                        ${isWeightUnit(p.unit) ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                        ${isWeightUnit(p.unit) && p.sellMode === 'loose' ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                         ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
                     </td>
                 </tr>
@@ -2048,6 +2076,7 @@
             document.getElementById('productStockLabel').textContent = `Stock (${unit})`;
             const stockInput = document.getElementById('productStock');
             stockInput.step = isWeightUnit(unit) ? '0.01' : '1';
+            document.getElementById('sellModeField').style.display = isWeightUnit(unit) ? 'block' : 'none';
         }
 
         function addProduct() {
@@ -2059,6 +2088,7 @@
             const name = document.getElementById('productName').value;
             const barcode = document.getElementById('productBarcode').value;
             const unit = document.getElementById('productUnit').value;
+            const sellMode = isWeightUnit(unit) ? document.getElementById('productSellMode').value : 'prepacked';
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseFloat(document.getElementById('productStock').value);
             const icon = document.getElementById('productIcon').value || '📦';
@@ -2074,11 +2104,12 @@
             }
 
             const newId = DB.products.length ? Math.max(...DB.products.map(p => p.id)) + 1 : 1;
-            DB.products.push({ id: newId, name, barcode, unit, price, stock, icon });
+            DB.products.push({ id: newId, name, barcode, unit, sellMode, price, stock, icon });
 
             document.getElementById('productName').value = '';
             document.getElementById('productBarcode').value = '';
             document.getElementById('productUnit').value = 'pcs';
+            document.getElementById('productSellMode').value = 'loose';
             onUnitChange();
             document.getElementById('productPrice').value = '';
             document.getElementById('productStock').value = '50';
@@ -2090,7 +2121,7 @@
             loadProductsTable();
             loadBarcodeList();
             checkLowStock();
-            logAudit('product_added', `Added "${name}" (barcode ${barcode})`);
+            logAudit('product_added', `Added "${name}" (barcode ${barcode}, ${sellMode})`);
             saveDB();
 
             if (confirm(`✓ Product added!\n\nPrint a barcode label for "${name}" now?`)) {
@@ -2428,13 +2459,15 @@
         }
 
         // CART
-        function getQtyStep(unit) {
+        function getQtyStep(unit, sellMode) {
+            if (sellMode === 'prepacked') return 1; // sold as whole fixed packages
             if (unit === 'kg' || unit === 'l') return 0.5;
             if (unit === 'g' || unit === 'ml') return 50;
             return 1; // pcs
         }
 
-        function getMinQty(unit) {
+        function getMinQty(unit, sellMode) {
+            if (sellMode === 'prepacked') return 1;
             if (unit === 'kg' || unit === 'l') return 0.05;
             if (unit === 'g' || unit === 'ml') return 1;
             return 1; // pcs
@@ -2454,9 +2487,9 @@
 
             const existing = cart.find(item => item.id === productId && !item.isPackedItem);
             if (existing) {
-                existing.quantity = Math.round((existing.quantity + getQtyStep(product.unit)) * 1000) / 1000;
+                existing.quantity = Math.round((existing.quantity + getQtyStep(product.unit, product.sellMode)) * 1000) / 1000;
             } else {
-                cart.push({ ...product, quantity: getQtyStep(product.unit) });
+                cart.push({ ...product, quantity: getQtyStep(product.unit, product.sellMode) });
             }
             updateCart();
         }
@@ -2501,7 +2534,7 @@
             }
 
             cartDiv.innerHTML = cart.map((item, index) => {
-                const isWeight = isWeightUnit(item.unit);
+                const isLooseWeight = isWeightUnit(item.unit) && item.sellMode !== 'prepacked';
                 const isPacked = !!item.isPackedItem;
                 return `
                 <div class="cart-item">
@@ -2511,7 +2544,7 @@
                             ${isPacked
                                 ? `<span style="font-size:12px; color:#666;">${formatQty(item.quantity, item.unit)} ${item.unit} (fixed)</span>`
                                 : `<button class="qty-btn" onclick="updateQty(${index}, -1)">−</button>
-                                   <input type="number" class="qty-input" style="${isWeight ? 'width:50px;' : ''}" step="${isWeight ? '0.01' : '1'}" min="${getMinQty(item.unit)}" value="${item.quantity}" onchange="setQty(${index}, this.value)">
+                                   <input type="number" class="qty-input" style="${isLooseWeight ? 'width:50px;' : ''}" step="${isLooseWeight ? '0.01' : '1'}" min="${getMinQty(item.unit, item.sellMode)}" value="${item.quantity}" onchange="setQty(${index}, this.value)">
                                    <button class="qty-btn" onclick="updateQty(${index}, 1)">+</button>`
                             }
                         </div>
@@ -2527,8 +2560,8 @@
 
         function updateQty(index, direction) {
             const item = cart[index];
-            const step = getQtyStep(item.unit);
-            const min = getMinQty(item.unit);
+            const step = getQtyStep(item.unit, item.sellMode);
+            const min = getMinQty(item.unit, item.sellMode);
             const newQty = item.quantity + (direction * step);
             item.quantity = Math.max(min, Math.round(newQty * 1000) / 1000);
             updateCart();
@@ -2536,7 +2569,7 @@
 
         function setQty(index, value) {
             const item = cart[index];
-            const min = getMinQty(item.unit);
+            const min = getMinQty(item.unit, item.sellMode);
             const parsed = parseFloat(value);
             item.quantity = Math.max(min, isNaN(parsed) ? min : Math.round(parsed * 1000) / 1000);
             updateCart();
@@ -3193,6 +3226,16 @@
             });
             downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', 'Exported stock CSV');
+        }
+
+        function exportAuditLogCSV() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const rows = [['Date/Time', 'User', 'Action', 'Details']];
+            DB.auditLog.forEach(a => {
+                rows.push([a.time, a.user, a.action.replace(/_/g, ' '), a.details || '']);
+            });
+            downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            logAudit('export', `Exported full audit log (${DB.auditLog.length} entries)`);
         }
 
         // Ensure login page reflects current branding settings immediately on load
