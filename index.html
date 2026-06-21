@@ -1,0 +1,2096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Enterprise Grocery POS</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #f0f2f5 100%);
+            color: #2c3e50;
+        }
+
+        .hidden { display: none !important; }
+
+        /* DEVICE STATUS */
+        .device-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 1000;
+        }
+
+        .device-indicator {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            animation: slideIn 0.3s ease;
+        }
+
+        .device-indicator.scanner-ready {
+            background: #27ae60;
+            color: white;
+        }
+
+        .device-indicator.printer-ready {
+            background: #3498db;
+            color: white;
+        }
+
+        .device-indicator.waiting {
+            background: #f39c12;
+            color: white;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* MODAL */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #BA7517;
+            padding-bottom: 12px;
+        }
+
+        .modal-header h2 {
+            color: #185FA5;
+            font-size: 20px;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #999;
+            cursor: pointer;
+        }
+
+        /* LOGIN */
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #185FA5 0%, #0C447C 100%);
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .login-header h1 {
+            font-size: 28px;
+            color: #185FA5;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: #2c3e50;
+            font-size: 13px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #BA7517;
+            box-shadow: 0 0 0 3px rgba(186, 117, 23, 0.1);
+        }
+
+        .btn-login {
+            width: 100%;
+            padding: 11px;
+            background: linear-gradient(135deg, #185FA5 0%, #0C447C 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(24, 95, 165, 0.3);
+        }
+
+        .demo-users {
+            background: #f0f4f8;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 20px;
+            font-size: 11px;
+            color: #666;
+            border-left: 3px solid #BA7517;
+        }
+
+        .error-msg {
+            color: #e74c3c;
+            font-size: 13px;
+            margin-bottom: 10px;
+            display: none;
+        }
+
+        /* APP LAYOUT */
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 200px;
+            background: linear-gradient(180deg, #185FA5 0%, #0C447C 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .sidebar-logo {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-menu {
+            flex: 1;
+        }
+
+        .menu-item {
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            border: 1px solid transparent;
+            color: rgba(255,255,255,0.8);
+        }
+
+        .menu-item.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .menu-item:not(.disabled):hover {
+            background: rgba(255,255,255,0.1);
+            border-color: #BA7517;
+        }
+
+        .menu-item.active {
+            background: #BA7517;
+            color: white;
+            border-color: #BA7517;
+            font-weight: 600;
+        }
+
+        .menu-item i {
+            width: 20px;
+            text-align: center;
+        }
+
+        .sidebar-footer {
+            border-top: 1px solid rgba(255,255,255,0.2);
+            padding-top: 16px;
+        }
+
+        .user-info {
+            font-size: 11px;
+            margin-bottom: 12px;
+            padding: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+        }
+
+        .user-name {
+            font-weight: 600;
+            color: #BA7517;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .top-bar {
+            background: white;
+            padding: 16px 20px;
+            border-bottom: 2px solid #BA7517;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .top-bar h2 {
+            font-size: 20px;
+            color: #185FA5;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        /* POS */
+        .pos-container {
+            display: flex;
+            gap: 16px;
+            height: 100%;
+        }
+
+        .catalog-panel, .invoice-panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .catalog-panel {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        .invoice-panel {
+            width: 380px;
+        }
+
+        .panel-header {
+            background: linear-gradient(135deg, #185FA5 0%, #0C447C 100%);
+            color: white;
+            padding: 16px;
+            border-bottom: 3px solid #BA7517;
+        }
+
+        .panel-header h3 {
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+
+        .panel-header p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .scanner-input-wrapper {
+            padding: 12px;
+            background: #f0f4f8;
+            border-bottom: 2px solid #BA7517;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .barcode-input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 2px solid #185FA5;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            background: white;
+        }
+
+        .barcode-input:focus {
+            outline: none;
+            border-color: #BA7517;
+            box-shadow: 0 0 0 3px rgba(186, 117, 23, 0.1);
+        }
+
+        .scanner-status {
+            font-size: 11px;
+            color: #27ae60;
+            font-weight: 600;
+            animation: pulse 2s infinite;
+        }
+
+        .products-grid {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .product-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .product-card:hover {
+            border-color: #BA7517;
+            box-shadow: 0 4px 12px rgba(186, 117, 23, 0.12);
+            transform: translateY(-2px);
+        }
+
+        .product-icon { font-size: 32px; margin-bottom: 8px; }
+        .product-name { font-weight: 600; font-size: 13px; color: #2c3e50; margin-bottom: 4px; }
+        .product-stock { font-size: 11px; color: #999; margin-bottom: 6px; }
+        .product-stock.low { color: #e74c3c; font-weight: 600; }
+        .product-price { font-size: 14px; font-weight: 700; color: #BA7517; }
+
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .cart-item-left { flex: 1; }
+        .cart-item-name { font-weight: 500; color: #2c3e50; }
+        .cart-item-qty { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+        .qty-btn { width: 24px; height: 24px; border: 1px solid #d0d0d0; background: white; cursor: pointer; border-radius: 4px; font-size: 12px; transition: all 0.2s; }
+        .qty-btn:hover { border-color: #BA7517; color: #BA7517; }
+        .qty-input { width: 32px; text-align: center; border: 1px solid #d0d0d0; border-radius: 4px; padding: 2px; font-size: 12px; }
+        .cart-item-right { text-align: right; display: flex; flex-direction: column; gap: 4px; }
+        .item-total { font-weight: 600; color: #BA7517; }
+        .btn-remove { width: 24px; height: 24px; background: none; border: none; color: #e74c3c; cursor: pointer; font-size: 14px; }
+
+        .empty-cart { text-align: center; padding: 40px 20px; color: #999; }
+
+        .invoice-section { padding: 16px; flex: 1; overflow-y: auto; }
+
+        .summary-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+        .summary-row.total { border-top: 2px solid #BA7517; padding-top: 8px; font-weight: 700; font-size: 15px; color: #185FA5; }
+
+        .payment-section { padding: 12px; background: #f9f9f9; border-top: 1px solid #e0e0e0; }
+
+        .payment-input { display: flex; gap: 8px; margin-bottom: 8px; }
+        .payment-input input { flex: 1; padding: 8px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 13px; }
+
+        .change-display { background: #27ae60; color: white; padding: 10px; border-radius: 6px; text-align: center; font-weight: 700; margin-bottom: 8px; }
+        .change-display.negative { background: #e74c3c; }
+
+        .action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .btn-action {
+            flex: 1;
+            min-width: 100px;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-checkout { background: linear-gradient(135deg, #185FA5 0%, #0C447C 100%); color: white; }
+        .btn-checkout:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(24, 95, 165, 0.3); }
+        .btn-checkout:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-secondary { background: #f5f5f5; color: #666; border: 1px solid #d0d0d0; }
+        .btn-secondary:hover { background: #e74c3c; color: white; }
+
+        /* PRODUCTS */
+        .products-container {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .add-product-section {
+            background: #f9f9f9;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr auto;
+            gap: 12px;
+            align-items: flex-end;
+            margin-bottom: 12px;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-field label {
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 4px;
+            color: #185FA5;
+        }
+
+        .form-field input, .form-field select {
+            padding: 8px;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .form-field input:focus, .form-field select:focus {
+            outline: none;
+            border-color: #BA7517;
+        }
+
+        .barcode-scan-section {
+            background: #e8f4f8;
+            padding: 12px;
+            border-radius: 6px;
+            border: 2px dashed #3498db;
+            margin-bottom: 16px;
+        }
+
+        .barcode-scan-input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #3498db;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+        }
+
+        .barcode-scan-input:focus {
+            outline: none;
+            border-color: #27ae60;
+            box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.1);
+        }
+
+        .btn-add-product { padding: 8px 16px; background: #27ae60; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+        .btn-add-product:hover { background: #229954; transform: translateY(-2px); }
+
+        .products-table { width: 100%; border-collapse: collapse; }
+        .products-table th { background: #f5f5f5; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #BA7517; color: #185FA5; }
+        .products-table td { padding: 12px; border-bottom: 1px solid #e0e0e0; }
+        .products-table tr:hover { background: #f9f9f9; }
+
+        .btn-edit, .btn-delete-product {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-right: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-edit { background: #3498db; color: white; }
+        .btn-edit:hover { background: #2980b9; }
+
+        .btn-delete-product { background: #e74c3c; color: white; }
+        .btn-delete-product:hover { background: #c0392b; }
+
+        .permission-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #f0f4f8;
+            color: #185FA5;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .permission-badge.restricted {
+            background: #ffe0e0;
+            color: #e74c3c;
+        }
+
+        .scrollbar { scrollbar-color: #BA7517 #f1f1f1; scrollbar-width: thin; }
+
+        .btn-logout { width: 100%; padding: 8px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .btn-logout:hover { background: #e74c3c; border-color: #e74c3c; }
+
+        /* ADMIN PANEL */
+        .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 1100px) { .admin-grid { grid-template-columns: 1fr; } }
+
+        .admin-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+
+        .admin-card h4 {
+            color: #185FA5;
+            font-size: 15px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 2px solid #BA7517;
+            padding-bottom: 10px;
+        }
+
+        .perm-toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+        }
+
+        .perm-toggle-row:last-child { border-bottom: none; }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 22px;
+            flex-shrink: 0;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .switch-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc;
+            border-radius: 22px;
+            transition: 0.2s;
+        }
+
+        .switch-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            border-radius: 50%;
+            transition: 0.2s;
+        }
+
+        .switch input:checked + .switch-slider { background-color: #27ae60; }
+        .switch input:checked + .switch-slider:before { transform: translateX(18px); }
+        .switch input:disabled + .switch-slider { opacity: 0.5; cursor: not-allowed; }
+
+        .user-card-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .user-card-row .uname { font-weight: 600; color: #2c3e50; }
+        .user-card-row .urole { font-size: 11px; color: #999; }
+
+        .btn-small {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 6px;
+        }
+
+        .btn-small.edit { background: #3498db; color: white; }
+        .btn-small.edit:hover { background: #2980b9; }
+        .btn-small.del { background: #e74c3c; color: white; }
+        .btn-small.del:hover { background: #c0392b; }
+        .btn-small.pass { background: #BA7517; color: white; }
+        .btn-small.pass:hover { background: #9c6112; }
+
+        .low-stock-banner {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            animation: pulse 2s infinite;
+        }
+
+        .low-stock-banner.hidden-banner { display: none; }
+
+        .color-swatch-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+        .color-swatch {
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 0 0 1px #d0d0d0;
+        }
+        .color-swatch:hover { box-shadow: 0 0 0 2px #BA7517; }
+
+        /* INVOICE PREVIEW MODAL */
+        .invoice-modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 0;
+            width: 100%;
+            max-width: 420px;
+            max-height: 92vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .invoice-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 16px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #e0e0e0;
+            position: sticky;
+            top: 0;
+        }
+
+        .invoice-toolbar .btn-action { flex: none; padding: 8px 14px; }
+
+        .invoice-paper {
+            padding: 24px 20px;
+            font-family: 'Courier New', Courier, monospace;
+            color: #222;
+        }
+
+        .invoice-shop-header { text-align: center; margin-bottom: 14px; }
+        .invoice-shop-logo { font-size: 36px; margin-bottom: 4px; }
+        .invoice-shop-name { font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
+        .invoice-shop-meta { font-size: 11px; color: #555; margin-top: 2px; line-height: 1.4; }
+
+        .invoice-divider { border-top: 1px dashed #999; margin: 12px 0; }
+
+        .invoice-meta-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+
+        .invoice-items-table { width: 100%; font-size: 12px; border-collapse: collapse; margin: 10px 0; }
+        .invoice-items-table th { text-align: left; border-bottom: 1px solid #333; padding: 4px 2px; font-size: 11px; }
+        .invoice-items-table td { padding: 4px 2px; vertical-align: top; }
+        .invoice-items-table .num { text-align: right; }
+
+        .invoice-totals { margin-top: 8px; font-size: 13px; }
+        .invoice-totals .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+        .invoice-totals .grand { font-weight: 700; font-size: 15px; border-top: 1px solid #333; padding-top: 6px; margin-top: 6px; }
+
+        .invoice-footer-note { text-align: center; margin-top: 16px; font-size: 12px; font-style: italic; color: #444; }
+
+        @media print {
+            body * { visibility: hidden; }
+            #invoiceModal, #invoiceModal * { visibility: visible; }
+            #invoiceModal {
+                position: absolute;
+                left: 0; top: 0;
+                display: block !important;
+                background: white !important;
+            }
+            .invoice-modal-content { max-width: 100%; box-shadow: none; }
+            .invoice-toolbar, .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <!-- LOGIN -->
+    <div id="loginScreen" class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <h1><i class="fas fa-store" id="loginLogoIcon"></i> <span id="loginTitleText">POS System</span></h1>
+                <p id="loginSubtitle">Enterprise Grocery Management</p>
+            </div>
+            <div id="errorMsg" class="error-msg"></div>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label>User ID</label>
+                    <input type="text" id="loginId" placeholder="Enter user ID" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPass" placeholder="Enter password" required>
+                </div>
+                <button type="submit" class="btn-login">Login</button>
+            </form>
+            <div class="demo-users">
+                <strong>Demo Credentials:</strong><br>
+                Admin: admin / 1234<br>
+                Scanner Ops: scanner / 1234<br>
+                Cashier: cashier / 1234
+            </div>
+        </div>
+    </div>
+
+    <!-- APP -->
+    <div id="appScreen" class="app-container hidden">
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <i class="fas fa-store"></i> POS
+            </div>
+            <div class="sidebar-menu">
+                <div class="menu-item active" onclick="switchSection('pos')">
+                    <i class="fas fa-shopping-cart"></i> POS
+                </div>
+                <div class="menu-item" id="productsMenu" onclick="switchSection('products')">
+                    <i class="fas fa-plus-square"></i> Products
+                </div>
+                <div class="menu-item" id="scanMenu" onclick="switchSection('barcode-mgmt')" style="display:none;">
+                    <i class="fas fa-qrcode"></i> Barcode Mgmt
+                </div>
+                <div class="menu-item" onclick="switchSection('reports')">
+                    <i class="fas fa-chart-bar"></i> Reports
+                </div>
+                <div class="menu-item" id="adminMenu" onclick="switchSection('admin')" style="display:none;">
+                    <i class="fas fa-user-shield"></i> Admin Panel
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-name" id="currentUser"></div>
+                    <div style="font-size: 11px; opacity: 0.9;">Role: <span id="currentRole"></span></div>
+                    <div style="font-size: 10px; margin-top: 6px; opacity: 0.7;">
+                        <i class="fas fa-lock"></i> <span id="permissions"></span>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="top-bar">
+                <h2 id="sectionTitle">Point of Sale</h2>
+                <div id="currentTime"></div>
+            </div>
+
+            <div class="content-area scrollbar">
+                <div id="lowStockBanner" class="low-stock-banner hidden-banner">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span id="lowStockBannerText"></span>
+                </div>
+                <!-- POS -->
+                <div id="pos" class="section active">
+                    <div class="pos-container">
+                        <div class="catalog-panel">
+                            <div class="panel-header">
+                                <h3><i class="fas fa-barcode"></i> Scanner</h3>
+                                <p>Plug USB scanner & scan items</p>
+                            </div>
+                            <div class="scanner-input-wrapper">
+                                <i class="fas fa-barcode" style="color: #185FA5; font-size: 18px;"></i>
+                                <input type="text" id="barcodeInput" class="barcode-input" placeholder="Ready to scan...">
+                                <span class="scanner-status"><i class="fas fa-dot-circle"></i> Active</span>
+                            </div>
+                            <div class="products-grid" id="productsGrid"></div>
+                        </div>
+
+                        <div class="invoice-panel">
+                            <div class="panel-header">
+                                <h3><i class="fas fa-receipt"></i> Invoice</h3>
+                                <p>Current transaction</p>
+                            </div>
+                            <div class="invoice-section" id="cartItems">
+                                <div class="empty-cart">
+                                    <i class="fas fa-inbox"></i>
+                                    <p>Cart is empty</p>
+                                </div>
+                            </div>
+                            <div class="payment-section">
+                                <div class="summary-row">
+                                    <span>Total</span>
+                                    <span id="total">৳ 0.00</span>
+                                </div>
+                                <div class="payment-input">
+                                    <input type="number" id="cashAmount" placeholder="Cash" step="0.01">
+                                    <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
+                                </div>
+                                <div class="change-display" id="changeDisplay" style="display:none;"></div>
+                                <div class="action-buttons">
+                                    <button class="btn-action btn-checkout" id="checkoutBtn" onclick="checkout()" disabled>
+                                        <i class="fas fa-credit-card"></i> Complete
+                                    </button>
+                                    <button class="btn-action btn-secondary" onclick="previewCart()"><i class="fas fa-eye"></i> Preview</button>
+                                    <button class="btn-action btn-secondary" onclick="clearCart()">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PRODUCTS -->
+                <div id="products" class="section">
+                    <div class="products-container">
+                        <h3 style="color: #185FA5; margin-bottom: 16px;">Product Management</h3>
+                        
+                        <div class="add-product-section">
+                            <div style="margin-bottom: 12px;">
+                                <h4 style="color: #185FA5; font-size: 14px; margin-bottom: 8px;">Add New Product</h4>
+                                <div class="form-grid">
+                                    <div class="form-field">
+                                        <label>Name</label>
+                                        <input type="text" id="productName" placeholder="Product name">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Barcode</label>
+                                        <input type="text" id="productBarcode" placeholder="EAN-13">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Price (৳)</label>
+                                        <input type="number" id="productPrice" placeholder="0.00" step="0.01">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Stock</label>
+                                        <input type="number" id="productStock" placeholder="0" value="50">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Icon</label>
+                                        <input type="text" id="productIcon" placeholder="📦" maxlength="2" value="📦">
+                                    </div>
+                                    <button type="button" class="btn-add-product" onclick="addProduct()">Add</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <table class="products-table">
+                            <thead>
+                                <tr>
+                                    <th>Icon</th>
+                                    <th>Name</th>
+                                    <th>Barcode</th>
+                                    <th>Price</th>
+                                    <th>Stock</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- BARCODE MANAGEMENT -->
+                <div id="barcode-mgmt" class="section">
+                    <div class="products-container">
+                        <h3 style="color: #185FA5; margin-bottom: 16px;"><i class="fas fa-qrcode"></i> Barcode Scanner Verification</h3>
+                        
+                        <div class="barcode-scan-section">
+                            <div style="margin-bottom: 8px; color: #2c3e50; font-weight: 600; font-size: 13px;">
+                                Scan product barcode to verify:
+                            </div>
+                            <input type="text" id="barcodeVerifyInput" class="barcode-scan-input" placeholder="Scan barcode here..." autofocus>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                            <div style="background: #f0f8f4; border-radius: 8px; padding: 16px; border: 2px solid #27ae60;">
+                                <h4 style="color: #27ae60; margin-bottom: 12px;"><i class="fas fa-check-circle"></i> Valid Products</h4>
+                                <div id="validBarcodesList" style="font-size: 12px;">Loading...</div>
+                            </div>
+                            <div style="background: #fff5f5; border-radius: 8px; padding: 16px; border: 2px solid #e74c3c;">
+                                <h4 style="color: #e74c3c; margin-bottom: 12px;"><i class="fas fa-exclamation-circle"></i> Verification Result</h4>
+                                <div id="barcodeVerifyResult" style="font-size: 12px; color: #999;">Scan a barcode to verify</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- REPORTS -->
+                <div id="reports" class="section">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="products-container">
+                            <h3 style="color: #185FA5; margin-bottom: 16px;"><i class="fas fa-cash-register"></i> Sales</h3>
+                            <div style="background: linear-gradient(135deg, #185FA5 0%, #0C447C 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9;">Total Sales</div>
+                                <div style="font-size: 28px; font-weight: 700;" id="totalSales">৳ 0.00</div>
+                            </div>
+                            <table class="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Items</th>
+                                        <th>Amount</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="salesTableBody"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="products-container">
+                            <h3 style="color: #185FA5; margin-bottom: 16px;"><i class="fas fa-warehouse"></i> Stock</h3>
+                            <div style="background: linear-gradient(135deg, #27ae60 0%, #229954 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
+                                <div style="font-size: 12px; opacity: 0.9;">Total Items</div>
+                                <div style="font-size: 28px; font-weight: 700;" id="totalStockItems">0</div>
+                            </div>
+                            <table class="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th>Stock</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="stockReportBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ADMIN PANEL -->
+                <div id="admin" class="section">
+                    <div class="admin-grid">
+                        <!-- Create / Manage Users -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-users-cog"></i> User Management</h4>
+                            <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr auto;">
+                                <div class="form-field">
+                                    <label>User ID</label>
+                                    <input type="text" id="newUserId" placeholder="e.g. cashier2">
+                                </div>
+                                <div class="form-field">
+                                    <label>Password</label>
+                                    <input type="text" id="newUserPass" placeholder="Password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Display Name</label>
+                                    <input type="text" id="newUserName" placeholder="Full name">
+                                </div>
+                                <div class="form-field">
+                                    <label>Role Label</label>
+                                    <input type="text" id="newUserRole" placeholder="e.g. cashier">
+                                </div>
+                                <button type="button" class="btn-add-product" onclick="createUser()">
+                                    <i class="fas fa-plus"></i> Create User
+                                </button>
+                            </div>
+                            <div id="usersList" style="margin-top: 16px;"></div>
+                        </div>
+
+                        <!-- Permission Editor -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-key"></i> Edit Permissions — <span id="permEditUserLabel" style="color:#BA7517;">Select a user</span></h4>
+                            <div id="permEditorBody" style="color:#999; font-size:13px;">
+                                Click "Permissions" next to a user below to edit what they can access and do.
+                            </div>
+                        </div>
+
+                        <!-- Low Stock Settings -->
+                        <div class="admin-card">
+                            <h4><i class="fas fa-warehouse"></i> Low Stock Alert</h4>
+                            <div class="form-field" style="margin-bottom: 10px;">
+                                <label>Alert when stock is at or below:</label>
+                                <input type="number" id="lowStockThreshold" value="10" min="0" onchange="updateLowStockThreshold()">
+                            </div>
+                            <p style="font-size: 12px; color: #999;">A banner will appear for all users when any product reaches this stock level.</p>
+                        </div>
+
+                        <!-- Login Page Customization -->
+                        <div class="admin-card">
+                            <h4><i class="fas fa-paint-brush"></i> Login Page & Branding</h4>
+                            <div class="form-field" style="margin-bottom: 10px;">
+                                <label>App Title</label>
+                                <input type="text" id="brandTitle" placeholder="POS System" oninput="applyBranding()">
+                            </div>
+                            <div class="form-field" style="margin-bottom: 10px;">
+                                <label>Subtitle</label>
+                                <input type="text" id="brandSubtitle" placeholder="Enterprise Grocery Management" oninput="applyBranding()">
+                            </div>
+                            <div class="form-field" style="margin-bottom: 10px;">
+                                <label>Logo Icon (FontAwesome class, e.g. fa-store, fa-shopping-bag)</label>
+                                <input type="text" id="brandIcon" placeholder="fas fa-store" oninput="applyBranding()">
+                            </div>
+                            <div class="form-field">
+                                <label>Login Background Color</label>
+                                <input type="color" id="brandBgColor" value="#185fa5" onchange="applyBranding()" style="height: 38px; cursor: pointer;">
+                                <div class="color-swatch-row">
+                                    <div class="color-swatch" style="background:#185FA5;" onclick="setBrandColor('#185FA5')"></div>
+                                    <div class="color-swatch" style="background:#27ae60;" onclick="setBrandColor('#27ae60')"></div>
+                                    <div class="color-swatch" style="background:#8e44ad;" onclick="setBrandColor('#8e44ad')"></div>
+                                    <div class="color-swatch" style="background:#c0392b;" onclick="setBrandColor('#c0392b')"></div>
+                                    <div class="color-swatch" style="background:#2c3e50;" onclick="setBrandColor('#2c3e50')"></div>
+                                    <div class="color-swatch" style="background:#BA7517;" onclick="setBrandColor('#BA7517')"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Invoice Customization -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-file-invoice"></i> Invoice / Receipt Customization</h4>
+                            <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+                                <div class="form-field">
+                                    <label>Shop Name</label>
+                                    <input type="text" id="shopName" placeholder="My Grocery Shop" oninput="applyInvoiceSettings()">
+                                </div>
+                                <div class="form-field">
+                                    <label>Phone</label>
+                                    <input type="text" id="shopPhone" placeholder="01700-000000" oninput="applyInvoiceSettings()">
+                                </div>
+                                <div class="form-field">
+                                    <label>Invoice Number Prefix</label>
+                                    <input type="text" id="invoicePrefix" placeholder="INV" oninput="applyInvoiceSettings()">
+                                </div>
+                            </div>
+                            <div class="form-field" style="margin-bottom: 12px;">
+                                <label>Shop Address</label>
+                                <input type="text" id="shopAddress" placeholder="House 12, Road 5, Dhaka" oninput="applyInvoiceSettings()">
+                            </div>
+                            <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+                                <div class="form-field">
+                                    <label>Logo (emoji or image URL)</label>
+                                    <input type="text" id="shopLogo" placeholder="🛒 or https://..." oninput="applyInvoiceSettings()">
+                                </div>
+                                <div class="form-field">
+                                    <label>Enable Tax / VAT</label>
+                                    <select id="showTax" onchange="applyInvoiceSettings()">
+                                        <option value="false">No</option>
+                                        <option value="true">Yes</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Tax Percentage (%)</label>
+                                    <input type="number" id="taxPercent" placeholder="0" min="0" step="0.1" oninput="applyInvoiceSettings()">
+                                </div>
+                            </div>
+                            <div class="form-field" style="margin-bottom: 12px;">
+                                <label>Footer Note</label>
+                                <input type="text" id="invoiceFooter" placeholder="Thank you for shopping with us!" oninput="applyInvoiceSettings()">
+                            </div>
+                            <button type="button" class="btn-add-product" onclick="previewSampleInvoice()">
+                                <i class="fas fa-eye"></i> Preview Sample Invoice
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- EDIT PRODUCT MODAL -->
+    <div id="editModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2>Update Product Price</h2>
+                <button class="close-modal" onclick="closeEditModal()">✕</button>
+            </div>
+            <div class="form-field" style="margin-bottom: 16px;">
+                <label>Product Name</label>
+                <input type="text" id="editName" disabled style="background: #f5f5f5;">
+            </div>
+            <div class="form-field" style="margin-bottom: 16px;">
+                <label>New Price (৳)</label>
+                <input type="number" id="editPrice" step="0.01">
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-action btn-checkout" style="flex: 1;" onclick="savePrice()">Update Price</button>
+                <button class="btn-action btn-secondary" style="flex: 1;" onclick="closeEditModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- INVOICE PREVIEW MODAL -->
+    <div id="invoiceModal" class="modal">
+        <div class="invoice-modal-content">
+            <div class="invoice-toolbar no-print">
+                <strong style="font-size:14px; color:#185FA5;"><i class="fas fa-receipt"></i> Invoice Preview</strong>
+                <div>
+                    <button class="btn-action btn-checkout" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+                    <button class="close-modal" onclick="closeInvoiceModal()" style="margin-left:8px;">✕</button>
+                </div>
+            </div>
+            <div class="invoice-paper" id="invoicePaper"></div>
+        </div>
+    </div>
+
+    <script>
+        // ===== PERMISSION DEFINITIONS =====
+        const ALL_PERMISSIONS = {
+            pos: 'Make Sales (POS)',
+            add_product: 'Add New Products',
+            edit_price: 'Edit Product Price',
+            edit_stock: 'Edit Stock Quantity',
+            delete_product: 'Delete Products',
+            delete_sales: 'Delete Sales Records',
+            view_reports: 'View Reports',
+            admin: 'Full Admin Access'
+        };
+
+        const DB = {
+            products: [
+                { id: 1, name: 'Tomato', barcode: '8901001001001', price: 60, stock: 50, icon: '🍅' },
+                { id: 2, name: 'Cucumber', barcode: '8901001001002', price: 40, stock: 30, icon: '🥒' },
+                { id: 3, name: 'Onion (1kg)', barcode: '8901001001003', price: 50, stock: 100, icon: '🧅' },
+                { id: 4, name: 'Carrot (1kg)', barcode: '8901001001004', price: 70, stock: 45, icon: '🥕' },
+                { id: 5, name: 'Milk (1L)', barcode: '8901001003001', price: 70, stock: 120, icon: '🥛' },
+                { id: 6, name: 'Banana', barcode: '8901001002002', price: 80, stock: 60, icon: '🍌' },
+            ],
+            users: [
+                { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','view_reports','admin'] },
+                { id: 'scanner', name: 'Scanner Operator', password: '1234', role: 'scanner',
+                  permissions: ['view_reports'] },
+                { id: 'cashier', name: 'Cashier', password: '1234', role: 'cashier',
+                  permissions: ['pos'] }
+            ],
+            sales: [],
+            currentUser: null,
+            invoiceCounter: 0,
+            settings: {
+                lowStockThreshold: 10,
+                brandTitle: 'POS System',
+                brandSubtitle: 'Enterprise Grocery Management',
+                brandIcon: 'fas fa-store',
+                brandBgColor: '#185FA5',
+                shopName: 'My Grocery Shop',
+                shopAddress: 'House 12, Road 5, Dhaka, Bangladesh',
+                shopPhone: '01700-000000',
+                shopLogo: '🛒',
+                invoicePrefix: 'INV',
+                invoiceFooter: 'Thank you for shopping with us!',
+                showTax: false,
+                taxPercent: 0
+            }
+        };
+
+        let cart = [];
+        let editingProductId = null;
+        let permEditingUserId = null;
+
+        function hasPerm(perm) {
+            return !!(DB.currentUser && DB.currentUser.permissions.includes(perm));
+        }
+
+        function handleLogin(event) {
+            event.preventDefault();
+            const userId = document.getElementById('loginId').value;
+            const password = document.getElementById('loginPass').value;
+            const user = DB.users.find(u => u.id === userId && u.password === password);
+
+            if (user) {
+                DB.currentUser = user;
+                document.getElementById('loginScreen').classList.add('hidden');
+                document.getElementById('appScreen').classList.remove('hidden');
+                initializeApp();
+            } else {
+                document.getElementById('errorMsg').textContent = 'Invalid credentials';
+                document.getElementById('errorMsg').style.display = 'block';
+            }
+        }
+
+        function initializeApp() {
+            document.getElementById('currentUser').textContent = (DB.currentUser.name || DB.currentUser.id).toUpperCase();
+            document.getElementById('currentRole').textContent = DB.currentUser.role.toUpperCase();
+
+            const permissions = DB.currentUser.permissions;
+            document.getElementById('permissions').textContent = permissions.length + ' access';
+
+            // Hide menu items based on permissions
+            document.getElementById('productsMenu').style.display = (hasPerm('add_product') || hasPerm('edit_price') || hasPerm('edit_stock') || hasPerm('delete_product') || hasPerm('admin')) ? '' : 'none';
+            document.getElementById('scanMenu').style.display = hasPerm('admin') ? '' : 'none';
+            document.getElementById('adminMenu').style.display = hasPerm('admin') ? '' : 'none';
+
+            const posMenuItem = document.querySelector('[onclick="switchSection(\'pos\')"]');
+            if (!hasPerm('pos')) {
+                posMenuItem.classList.add('disabled');
+            } else {
+                posMenuItem.classList.remove('disabled');
+            }
+
+            const reportsMenuItem = document.querySelector('[onclick="switchSection(\'reports\')"]');
+            if (!hasPerm('view_reports') && !hasPerm('admin')) {
+                reportsMenuItem.classList.add('disabled');
+            } else {
+                reportsMenuItem.classList.remove('disabled');
+            }
+
+            loadProducts();
+            loadProductsTable();
+            loadBarcodeList();
+            loadReports();
+            loadUsersList();
+            checkLowStock();
+            updateClock();
+            setInterval(updateClock, 1000);
+
+            // Default to a section the user can access
+            if (hasPerm('pos')) {
+                switchSection('pos', true);
+            } else if (hasPerm('view_reports') || hasPerm('admin')) {
+                switchSection('reports', true);
+            }
+
+            const barcodeEl = document.getElementById('barcodeInput');
+            if (barcodeEl && hasPerm('pos')) barcodeEl.focus();
+        }
+
+        function updateClock() {
+            document.getElementById('currentTime').textContent = new Date().toLocaleTimeString();
+        }
+
+        function switchSection(section, skipPermCheck) {
+            if (section === 'pos' && !hasPerm('pos')) {
+                alert('Access denied. POS section restricted.');
+                return;
+            }
+            if (section === 'admin' && !hasPerm('admin')) {
+                alert('Access denied. Admin only.');
+                return;
+            }
+            if (section === 'reports' && !hasPerm('view_reports') && !hasPerm('admin')) {
+                alert('Access denied. Reports restricted.');
+                return;
+            }
+
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
+
+            const sectionEl = document.getElementById(section);
+            if (sectionEl) {
+                sectionEl.classList.add('active');
+            }
+
+            if (!skipPermCheck) {
+                const target = event && event.target ? event.target.closest('.menu-item') : null;
+                if (target) target.classList.add('active');
+            } else {
+                const menuMap = { pos: '[onclick="switchSection(\'pos\')"]', products: '#productsMenu', 'barcode-mgmt': '#scanMenu', reports: '[onclick="switchSection(\'reports\')"]', admin: '#adminMenu' };
+                const el = document.querySelector(menuMap[section]);
+                if (el) el.classList.add('active');
+            }
+
+            const titles = { pos: 'Point of Sale', products: 'Products', 'barcode-mgmt': 'Barcode Scanner', reports: 'Reports', admin: 'Admin Panel' };
+            document.getElementById('sectionTitle').textContent = titles[section];
+
+            if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
+            if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
+            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); }
+        }
+
+        function logout() {
+            DB.currentUser = null;
+            cart = [];
+            document.getElementById('appScreen').classList.add('hidden');
+            document.getElementById('loginScreen').classList.remove('hidden');
+            document.getElementById('loginId').value = '';
+            document.getElementById('loginPass').value = '';
+        }
+
+        // ===== LOW STOCK ALERTS =====
+        function checkLowStock() {
+            const threshold = DB.settings.lowStockThreshold;
+            const lowItems = DB.products.filter(p => p.stock <= threshold);
+            const banner = document.getElementById('lowStockBanner');
+            const text = document.getElementById('lowStockBannerText');
+
+            if (lowItems.length > 0) {
+                const names = lowItems.map(p => `${p.icon} ${p.name} (${p.stock})`).join(', ');
+                text.textContent = `Low Stock Alert: ${names}`;
+                banner.classList.remove('hidden-banner');
+            } else {
+                banner.classList.add('hidden-banner');
+            }
+        }
+
+        function updateLowStockThreshold() {
+            const val = parseInt(document.getElementById('lowStockThreshold').value);
+            DB.settings.lowStockThreshold = isNaN(val) ? 10 : val;
+            checkLowStock();
+        }
+
+        // ===== BRANDING =====
+        function applyBranding() {
+            DB.settings.brandTitle = document.getElementById('brandTitle').value || 'POS System';
+            DB.settings.brandSubtitle = document.getElementById('brandSubtitle').value || 'Enterprise Grocery Management';
+            DB.settings.brandIcon = document.getElementById('brandIcon').value || 'fas fa-store';
+            DB.settings.brandBgColor = document.getElementById('brandBgColor').value || '#185FA5';
+            renderBranding();
+        }
+
+        function setBrandColor(hex) {
+            document.getElementById('brandBgColor').value = hex;
+            DB.settings.brandBgColor = hex;
+            renderBranding();
+        }
+
+        function renderBranding() {
+            document.getElementById('loginTitleText').textContent = DB.settings.brandTitle;
+            document.getElementById('loginSubtitle').textContent = DB.settings.brandSubtitle;
+            const iconEl = document.getElementById('loginLogoIcon');
+            iconEl.className = DB.settings.brandIcon;
+            const bg = DB.settings.brandBgColor;
+            document.querySelector('.login-container').style.background =
+                `linear-gradient(135deg, ${bg} 0%, ${shadeColor(bg, -25)} 100%)`;
+        }
+
+        function shadeColor(hex, percent) {
+            hex = hex.replace('#', '');
+            if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+            let r = parseInt(hex.substring(0,2), 16);
+            let g = parseInt(hex.substring(2,4), 16);
+            let b = parseInt(hex.substring(4,6), 16);
+            r = Math.max(0, Math.min(255, r + Math.round(r * percent / 100)));
+            g = Math.max(0, Math.min(255, g + Math.round(g * percent / 100)));
+            b = Math.max(0, Math.min(255, b + Math.round(b * percent / 100)));
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        function refreshAdminSettingsUI() {
+            document.getElementById('lowStockThreshold').value = DB.settings.lowStockThreshold;
+            document.getElementById('brandTitle').value = DB.settings.brandTitle;
+            document.getElementById('brandSubtitle').value = DB.settings.brandSubtitle;
+            document.getElementById('brandIcon').value = DB.settings.brandIcon;
+            document.getElementById('brandBgColor').value = DB.settings.brandBgColor;
+
+            document.getElementById('shopName').value = DB.settings.shopName;
+            document.getElementById('shopPhone').value = DB.settings.shopPhone;
+            document.getElementById('shopAddress').value = DB.settings.shopAddress;
+            document.getElementById('shopLogo').value = DB.settings.shopLogo;
+            document.getElementById('invoicePrefix').value = DB.settings.invoicePrefix;
+            document.getElementById('invoiceFooter').value = DB.settings.invoiceFooter;
+            document.getElementById('showTax').value = String(DB.settings.showTax);
+            document.getElementById('taxPercent').value = DB.settings.taxPercent;
+        }
+
+        // ===== INVOICE CUSTOMIZATION (ADMIN) =====
+        function applyInvoiceSettings() {
+            if (!hasPerm('admin')) return;
+            DB.settings.shopName = document.getElementById('shopName').value || 'My Shop';
+            DB.settings.shopPhone = document.getElementById('shopPhone').value;
+            DB.settings.shopAddress = document.getElementById('shopAddress').value;
+            DB.settings.shopLogo = document.getElementById('shopLogo').value || '🛒';
+            DB.settings.invoicePrefix = document.getElementById('invoicePrefix').value || 'INV';
+            DB.settings.invoiceFooter = document.getElementById('invoiceFooter').value;
+            DB.settings.showTax = document.getElementById('showTax').value === 'true';
+            DB.settings.taxPercent = parseFloat(document.getElementById('taxPercent').value) || 0;
+        }
+
+        function previewSampleInvoice() {
+            if (!hasPerm('admin')) return;
+            applyInvoiceSettings();
+            const sample = {
+                invoiceNo: (DB.settings.invoicePrefix || 'INV') + '-00000',
+                date: new Date().toLocaleString(),
+                items: [
+                    { name: 'Sample Item A', icon: '📦', price: 50, quantity: 2 },
+                    { name: 'Sample Item B', icon: '🥛', price: 70, quantity: 1 }
+                ],
+                amount: 170,
+                cashAmount: 200,
+                change: 30,
+                cashier: DB.currentUser ? DB.currentUser.id : 'admin'
+            };
+            openInvoicePreview(sample);
+        }
+
+        // ===== USER MANAGEMENT (ADMIN) =====
+        function createUser() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+
+            const id = document.getElementById('newUserId').value.trim();
+            const password = document.getElementById('newUserPass').value.trim();
+            const name = document.getElementById('newUserName').value.trim() || id;
+            const role = document.getElementById('newUserRole').value.trim() || 'staff';
+
+            if (!id || !password) {
+                alert('User ID and Password are required');
+                return;
+            }
+            if (DB.users.find(u => u.id === id)) {
+                alert('A user with this ID already exists');
+                return;
+            }
+
+            DB.users.push({ id, password, name, role, permissions: ['pos'] });
+
+            document.getElementById('newUserId').value = '';
+            document.getElementById('newUserPass').value = '';
+            document.getElementById('newUserName').value = '';
+            document.getElementById('newUserRole').value = '';
+
+            loadUsersList();
+            alert(`✓ User "${id}" created with default Cashier-level access. Click "Permissions" to customize.`);
+        }
+
+        function loadUsersList() {
+            const list = document.getElementById('usersList');
+            if (!list) return;
+
+            list.innerHTML = DB.users.map(u => `
+                <div class="user-card-row">
+                    <div>
+                        <div class="uname">${u.name || u.id} <span style="color:#999; font-weight:400;">(${u.id})</span></div>
+                        <div class="urole">${u.role.toUpperCase()} · ${u.permissions.length} permission(s)</div>
+                    </div>
+                    <div>
+                        <button class="btn-small edit" onclick="openPermEditor('${u.id}')"><i class="fas fa-key"></i> Permissions</button>
+                        <button class="btn-small pass" onclick="changePassword('${u.id}')"><i class="fas fa-lock"></i> Password</button>
+                        ${u.id !== 'admin' ? `<button class="btn-small del" onclick="deleteUser('${u.id}')"><i class="fas fa-trash"></i> Remove</button>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function changePassword(userId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const user = DB.users.find(u => u.id === userId);
+            if (!user) return;
+            const newPass = prompt(`Set new password for "${user.name || user.id}":`);
+            if (newPass === null) return;
+            if (!newPass.trim()) { alert('Password cannot be empty'); return; }
+            user.password = newPass.trim();
+            alert(`✓ Password updated for ${user.id}`);
+        }
+
+        function deleteUser(userId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            if (userId === 'admin') { alert('Cannot remove the admin account'); return; }
+            if (!confirm(`Remove user "${userId}"? This cannot be undone.`)) return;
+            DB.users = DB.users.filter(u => u.id !== userId);
+            if (permEditingUserId === userId) {
+                permEditingUserId = null;
+                document.getElementById('permEditUserLabel').textContent = 'Select a user';
+                document.getElementById('permEditorBody').innerHTML = 'Click "Permissions" next to a user below to edit what they can access and do.';
+            }
+            loadUsersList();
+        }
+
+        function openPermEditor(userId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const user = DB.users.find(u => u.id === userId);
+            if (!user) return;
+            permEditingUserId = userId;
+
+            document.getElementById('permEditUserLabel').textContent = `${user.name || user.id} (${user.id})`;
+
+            const isSelfAdmin = user.id === 'admin';
+            const body = document.getElementById('permEditorBody');
+            body.innerHTML = Object.entries(ALL_PERMISSIONS).map(([key, label]) => `
+                <div class="perm-toggle-row">
+                    <span>${label}</span>
+                    <label class="switch">
+                        <input type="checkbox" ${user.permissions.includes(key) ? 'checked' : ''}
+                            ${isSelfAdmin ? 'disabled' : ''}
+                            onchange="togglePermission('${user.id}', '${key}', this.checked)">
+                        <span class="switch-slider"></span>
+                    </label>
+                </div>
+            `).join('') + (isSelfAdmin ? '<p style="margin-top:10px; font-size:12px; color:#999;">The primary admin account always retains full access.</p>' : '');
+        }
+
+        function togglePermission(userId, perm, enabled) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const user = DB.users.find(u => u.id === userId);
+            if (!user || user.id === 'admin') return;
+
+            if (enabled && !user.permissions.includes(perm)) {
+                user.permissions.push(perm);
+            } else if (!enabled) {
+                user.permissions = user.permissions.filter(p => p !== perm);
+            }
+            loadUsersList();
+
+            // If the editing user is currently logged in (rare in single-session demo), refresh their UI
+            if (DB.currentUser && DB.currentUser.id === userId) {
+                initializeApp();
+            }
+        }
+
+        // ===== PRODUCTS =====
+        function loadProducts() {
+            const grid = document.getElementById('productsGrid');
+            grid.innerHTML = DB.products.map(p => `
+                <div class="product-card" onclick="addToCart(${p.id})">
+                    <div class="product-icon">${p.icon}</div>
+                    <div class="product-name">${p.name}</div>
+                    <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${p.stock}</div>
+                    <div class="product-price">৳ ${p.price.toFixed(2)}</div>
+                </div>
+            `).join('');
+        }
+
+        function loadProductsTable() {
+            const tbody = document.getElementById('productsTableBody');
+            tbody.innerHTML = DB.products.map((p, idx) => `
+                <tr>
+                    <td>${p.icon}</td>
+                    <td>${p.name}</td>
+                    <td style="font-family: monospace; font-size: 11px;">${p.barcode}</td>
+                    <td>৳ ${p.price.toFixed(2)}</td>
+                    <td>
+                        ${p.stock}
+                        ${hasPerm('edit_stock') ? `<button class="btn-edit" style="margin-left:6px;" onclick="editStock(${p.id})"><i class="fas fa-boxes"></i></button>` : ''}
+                    </td>
+                    <td>
+                        ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
+                        ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function addProduct() {
+            if (!hasPerm('add_product')) {
+                alert('You don\'t have permission to add products');
+                return;
+            }
+
+            const name = document.getElementById('productName').value;
+            const barcode = document.getElementById('productBarcode').value;
+            const price = parseFloat(document.getElementById('productPrice').value);
+            const stock = parseInt(document.getElementById('productStock').value);
+            const icon = document.getElementById('productIcon').value || '📦';
+
+            if (!name || !barcode || !price) {
+                alert('Please fill all required fields');
+                return;
+            }
+
+            if (DB.products.find(p => p.barcode === barcode)) {
+                alert('Barcode already exists');
+                return;
+            }
+
+            DB.products.push({
+                id: Math.max(...DB.products.map(p => p.id)) + 1,
+                name, barcode, price, stock, icon
+            });
+
+            document.getElementById('productName').value = '';
+            document.getElementById('productBarcode').value = '';
+            document.getElementById('productPrice').value = '';
+            document.getElementById('productStock').value = '50';
+            document.getElementById('productIcon').value = '📦';
+
+            loadProducts();
+            loadProductsTable();
+            loadBarcodeList();
+            checkLowStock();
+            alert('✓ Product added successfully!');
+        }
+
+        function editProduct(productId) {
+            if (!hasPerm('edit_price')) {
+                alert('You don\'t have permission to update prices');
+                return;
+            }
+
+            const product = DB.products.find(p => p.id === productId);
+            editingProductId = productId;
+            document.getElementById('editName').value = product.name;
+            document.getElementById('editPrice').value = product.price;
+            document.getElementById('editModal').classList.add('active');
+            document.getElementById('editPrice').focus();
+        }
+
+        function savePrice() {
+            const newPrice = parseFloat(document.getElementById('editPrice').value);
+            if (!newPrice || newPrice < 0) {
+                alert('Enter valid price');
+                return;
+            }
+
+            const product = DB.products.find(p => p.id === editingProductId);
+            product.price = newPrice;
+            closeEditModal();
+            loadProducts();
+            loadProductsTable();
+            alert('✓ Price updated!');
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').classList.remove('active');
+            editingProductId = null;
+        }
+
+        function editStock(productId) {
+            if (!hasPerm('edit_stock')) {
+                alert('You don\'t have permission to edit stock');
+                return;
+            }
+            const product = DB.products.find(p => p.id === productId);
+            const newStock = prompt(`Set new stock quantity for "${product.name}":`, product.stock);
+            if (newStock === null) return;
+            const val = parseInt(newStock);
+            if (isNaN(val) || val < 0) { alert('Enter a valid stock number'); return; }
+            product.stock = val;
+            loadProducts();
+            loadProductsTable();
+            loadReports();
+            checkLowStock();
+        }
+
+        function deleteProduct(idx) {
+            if (!hasPerm('delete_product')) {
+                alert('Permission denied');
+                return;
+            }
+            if (confirm('Delete this product?')) {
+                DB.products.splice(idx, 1);
+                loadProducts();
+                loadProductsTable();
+                loadBarcodeList();
+                checkLowStock();
+            }
+        }
+
+        // BARCODE SCANNING
+        document.getElementById('barcodeInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const barcode = e.target.value.trim();
+                e.target.value = '';
+                if (barcode) {
+                    const product = DB.products.find(p => p.barcode === barcode);
+                    if (product) addToCart(product.id);
+                }
+            }
+        });
+
+        document.getElementById('barcodeVerifyInput') && document.getElementById('barcodeVerifyInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const barcode = e.target.value.trim();
+                e.target.value = '';
+                verifyBarcode(barcode);
+            }
+        });
+
+        function verifyBarcode(barcode) {
+            const product = DB.products.find(p => p.barcode === barcode);
+            const resultDiv = document.getElementById('barcodeVerifyResult');
+
+            if (product) {
+                resultDiv.innerHTML = `
+                    <div style="color: #27ae60; padding: 12px; background: #f0f8f4; border-radius: 6px;">
+                        <strong>✓ VALID</strong><br><br>
+                        Product: ${product.icon} ${product.name}<br>
+                        Price: ৳${product.price.toFixed(2)}<br>
+                        Stock: ${product.stock}<br>
+                        Barcode: ${product.barcode}
+                    </div>
+                `;
+            } else {
+                resultDiv.innerHTML = `
+                    <div style="color: #e74c3c; padding: 12px; background: #fff5f5; border-radius: 6px;">
+                        <strong>✗ NOT FOUND</strong><br><br>
+                        Barcode: ${barcode}<br>
+                        Status: Not in database
+                    </div>
+                `;
+            }
+        }
+
+        function loadBarcodeList() {
+            const list = document.getElementById('validBarcodesList');
+            if (!list) return;
+
+            list.innerHTML = DB.products.map(p => `
+                <div style="padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                    <div style="font-weight: 600;">${p.icon} ${p.name}</div>
+                    <div style="color: #666; font-size: 11px; font-family: monospace;">📌 ${p.barcode}</div>
+                </div>
+            `).join('');
+        }
+
+        // CART
+        function addToCart(productId) {
+            if (!hasPerm('pos')) {
+                alert('POS access denied');
+                return;
+            }
+
+            const product = DB.products.find(p => p.id === productId);
+            if (!product || product.stock <= 0) {
+                alert('Out of stock');
+                return;
+            }
+
+            const existing = cart.find(item => item.id === productId);
+            if (existing) {
+                existing.quantity++;
+            } else {
+                cart.push({ ...product, quantity: 1 });
+            }
+            updateCart();
+        }
+
+        function updateCart() {
+            const cartDiv = document.getElementById('cartItems');
+
+            if (cart.length === 0) {
+                cartDiv.innerHTML = '<div class="empty-cart"><i class="fas fa-inbox"></i><p>Cart is empty</p></div>';
+                updateTotals();
+                return;
+            }
+
+            cartDiv.innerHTML = cart.map((item, index) => `
+                <div class="cart-item">
+                    <div class="cart-item-left">
+                        <div class="cart-item-name">${item.icon} ${item.name}</div>
+                        <div class="cart-item-qty">
+                            <button class="qty-btn" onclick="updateQty(${index}, -1)">−</button>
+                            <input type="number" class="qty-input" value="${item.quantity}" onchange="setQty(${index}, this.value)">
+                            <button class="qty-btn" onclick="updateQty(${index}, 1)">+</button>
+                        </div>
+                    </div>
+                    <div class="cart-item-right">
+                        <div class="item-total">৳ ${(item.price * item.quantity).toFixed(2)}</div>
+                        <button class="btn-remove" onclick="removeItem(${index})">✕</button>
+                    </div>
+                </div>
+            `).join('');
+            updateTotals();
+        }
+
+        function updateQty(index, change) {
+            cart[index].quantity = Math.max(1, cart[index].quantity + change);
+            updateCart();
+        }
+
+        function setQty(index, value) {
+            cart[index].quantity = Math.max(1, parseInt(value) || 1);
+            updateCart();
+        }
+
+        function removeItem(index) {
+            cart.splice(index, 1);
+            updateCart();
+        }
+
+        function clearCart() {
+            if (cart.length > 0 && confirm('Clear cart?')) {
+                cart = [];
+                updateCart();
+                document.getElementById('cashAmount').value = '';
+                document.getElementById('changeDisplay').style.display = 'none';
+            }
+        }
+
+        function updateTotals() {
+            const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            document.getElementById('total').textContent = '৳ ' + subtotal.toFixed(2);
+        }
+
+        function calculateChange() {
+            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
+            const change = cashAmount - total;
+
+            const changeDisplay = document.getElementById('changeDisplay');
+            changeDisplay.style.display = 'block';
+            changeDisplay.textContent = 'Change: ৳ ' + change.toFixed(2);
+            changeDisplay.classList.toggle('negative', change < 0);
+
+            document.getElementById('checkoutBtn').disabled = change < 0;
+        }
+
+        function checkout() {
+            if (!hasPerm('pos')) {
+                alert('POS access denied');
+                return;
+            }
+
+            if (cart.length === 0) {
+                alert('Cart is empty');
+                return;
+            }
+
+            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
+
+            if (cashAmount < total) {
+                alert('Insufficient payment');
+                return;
+            }
+
+            cart.forEach(item => {
+                const product = DB.products.find(p => p.id === item.id);
+                if (product) product.stock -= item.quantity;
+            });
+
+            DB.invoiceCounter = (DB.invoiceCounter || 0) + 1;
+            const invoiceNo = (DB.settings.invoicePrefix || 'INV') + '-' + String(DB.invoiceCounter).padStart(5, '0');
+
+            const sale = {
+                id: Date.now(),
+                invoiceNo,
+                date: new Date().toLocaleString(),
+                items: cart.map(i => ({ name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                amount: total,
+                cashAmount,
+                change: cashAmount - total,
+                cashier: DB.currentUser.id
+            };
+            DB.sales.push(sale);
+
+            cart = [];
+            document.getElementById('cashAmount').value = '';
+            document.getElementById('changeDisplay').style.display = 'none';
+            updateCart();
+            loadProducts();
+            loadProductsTable();
+            loadReports();
+            checkLowStock();
+
+            openInvoicePreview(sale);
+        }
+
+        // ===== INVOICE PREVIEW / PRINT =====
+        function previewCart() {
+            if (cart.length === 0) {
+                alert('Cart is empty');
+                return;
+            }
+            const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
+            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+            const draftSale = {
+                invoiceNo: 'DRAFT',
+                date: new Date().toLocaleString(),
+                items: cart.map(i => ({ name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                amount: total,
+                cashAmount: cashAmount || undefined,
+                change: cashAmount ? (cashAmount - total) : undefined,
+                cashier: DB.currentUser.id
+            };
+            openInvoicePreview(draftSale);
+        }
+
+        function openInvoicePreview(sale) {
+            const s = DB.settings;
+            const subtotal = sale.items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+            const taxAmount = s.showTax ? subtotal * (s.taxPercent / 100) : 0;
+            const grandTotal = subtotal + taxAmount;
+
+            const itemsHtml = sale.items.map(i => `
+                <tr>
+                    <td>${i.icon || ''} ${i.name}</td>
+                    <td class="num">${i.quantity}</td>
+                    <td class="num">${i.price.toFixed(2)}</td>
+                    <td class="num">${(i.price * i.quantity).toFixed(2)}</td>
+                </tr>
+            `).join('');
+
+            const logoHtml = (s.shopLogo || '').startsWith('http')
+                ? `<img src="${s.shopLogo}" style="max-height:48px; max-width:140px;" alt="logo">`
+                : `<div class="invoice-shop-logo">${s.shopLogo || '🛒'}</div>`;
+
+            document.getElementById('invoicePaper').innerHTML = `
+                <div class="invoice-shop-header">
+                    ${logoHtml}
+                    <div class="invoice-shop-name">${s.shopName || 'My Shop'}</div>
+                    <div class="invoice-shop-meta">
+                        ${s.shopAddress ? s.shopAddress + '<br>' : ''}
+                        ${s.shopPhone ? 'Tel: ' + s.shopPhone : ''}
+                    </div>
+                </div>
+                <div class="invoice-divider"></div>
+                <div class="invoice-meta-row"><span>Invoice No:</span><strong>${sale.invoiceNo || '—'}</strong></div>
+                <div class="invoice-meta-row"><span>Date:</span><span>${sale.date}</span></div>
+                <div class="invoice-meta-row"><span>Cashier:</span><span>${sale.cashier}</span></div>
+                <div class="invoice-divider"></div>
+                <table class="invoice-items-table">
+                    <thead>
+                        <tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th></tr>
+                    </thead>
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <div class="invoice-divider"></div>
+                <div class="invoice-totals">
+                    <div class="row"><span>Subtotal</span><span>৳ ${subtotal.toFixed(2)}</span></div>
+                    ${s.showTax ? `<div class="row"><span>Tax (${s.taxPercent}%)</span><span>৳ ${taxAmount.toFixed(2)}</span></div>` : ''}
+                    <div class="row grand"><span>Total</span><span>৳ ${grandTotal.toFixed(2)}</span></div>
+                    ${sale.cashAmount !== undefined ? `
+                        <div class="row"><span>Cash Received</span><span>৳ ${sale.cashAmount.toFixed(2)}</span></div>
+                        <div class="row"><span>Change</span><span>৳ ${sale.change.toFixed(2)}</span></div>
+                    ` : ''}
+                </div>
+                ${s.invoiceFooter ? `<div class="invoice-footer-note">${s.invoiceFooter}</div>` : ''}
+            `;
+
+            document.getElementById('invoiceModal').classList.add('active');
+        }
+
+        function closeInvoiceModal() {
+            document.getElementById('invoiceModal').classList.remove('active');
+        }
+
+        // Click outside modal content to close; Escape key closes any open modal
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+            }
+        });
+
+        function loadReports() {
+            const totalSales = DB.sales.reduce((sum, s) => sum + s.amount, 0);
+            document.getElementById('totalSales').textContent = '৳ ' + totalSales.toFixed(2);
+
+            const totalStock = DB.products.reduce((sum, p) => sum + p.stock, 0);
+            document.getElementById('totalStockItems').textContent = totalStock;
+
+            const salesTbody = document.getElementById('salesTableBody');
+            const recentSales = DB.sales.slice(-8).reverse();
+            salesTbody.innerHTML = recentSales.map(s => `
+                <tr>
+                    <td>${s.date}</td>
+                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${i.quantity}`).join(', ')}</td>
+                    <td>৳ ${s.amount.toFixed(2)}</td>
+                    <td>
+                        <button class="btn-edit" onclick="reprintInvoice(${s.id})"><i class="fas fa-print"></i></button>
+                        ${hasPerm('delete_sales') ? `<button class="btn-delete-product" onclick="deleteSale(${s.id})">Delete</button>` : ''}
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" style="text-align: center; color: #999;">No sales</td></tr>';
+
+            const stockTbody = document.getElementById('stockReportBody');
+            stockTbody.innerHTML = DB.products.map(p => `
+                <tr>
+                    <td>${p.icon} ${p.name}</td>
+                    <td><strong>${p.stock}</strong></td>
+                    <td>${p.stock <= DB.settings.lowStockThreshold ? '<span style="color: #e74c3c;">⚠ Low</span>' : '<span style="color: #27ae60;">✓ OK</span>'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function reprintInvoice(saleId) {
+            const sale = DB.sales.find(s => s.id === saleId);
+            if (!sale) return;
+            openInvoicePreview(sale);
+        }
+
+        function deleteSale(saleId) {
+            if (!hasPerm('delete_sales')) {
+                alert('Permission denied');
+                return;
+            }
+            if (!confirm('Delete this sales record? This cannot be undone.')) return;
+            DB.sales = DB.sales.filter(s => s.id !== saleId);
+            loadReports();
+        }
+
+        // Ensure login page reflects current branding settings immediately on load
+        renderBranding();
+    </script>
+</body>
+</html>
