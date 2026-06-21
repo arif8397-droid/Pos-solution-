@@ -1049,10 +1049,11 @@
                                     </div>
                                     <div class="form-field" id="sellModeField" style="display:none;">
                                         <label>Sold As</label>
-                                        <select id="productSellMode">
-                                            <option value="loose">Loose — weighed per customer at counter</option>
-                                            <option value="prepacked">Pre-packed — fixed sealed package</option>
+                                        <select id="productSellMode" onchange="onSellModeChange()">
+                                            <option value="loose">Pack on demand — weighed/counted per customer at counter</option>
+                                            <option value="prepacked">Fixed unit — sold as a single sealed piece, no packing step</option>
                                         </select>
+                                        <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:4px;"></div>
                                     </div>
                                     <div class="form-field">
                                         <label id="productPriceLabel">Price (৳ / pcs)</label>
@@ -1436,6 +1437,7 @@
                 { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', sellMode: 'loose', price: 70, stock: 45, icon: '🥕' },
                 { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', sellMode: 'prepacked', price: 70, stock: 120, icon: '🥛' },
                 { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', sellMode: 'prepacked', price: 80, stock: 60, icon: '🍌' },
+                { id: 7, name: 'Egg', barcode: '8901001004001', unit: 'pcs', sellMode: 'loose', price: 12, stock: 300, icon: '🥚' },
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
@@ -1916,7 +1918,7 @@
                     <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
-                    ${isWeightUnit(p.unit) && p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                    ${p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas ${packButtonLabel(p.unit).icon}"></i> ${packButtonLabel(p.unit).text}</button>` : ''}
                 </div>
             `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
@@ -1936,7 +1938,7 @@
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
                         <button class="btn-edit" onclick="printBarcodeLabel(${p.id})"><i class="fas fa-barcode"></i> Label</button>
-                        ${isWeightUnit(p.unit) && p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                        ${p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas ${packButtonLabel(p.unit).icon}"></i> ${packButtonLabel(p.unit).text}</button>` : ''}
                         ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
                     </td>
                 </tr>
@@ -2071,13 +2073,35 @@
             return unit === 'kg' || unit === 'g' || unit === 'l' || unit === 'ml';
         }
 
+        function packButtonLabel(unit) {
+            return isWeightUnit(unit)
+                ? { icon: 'fa-weight-hanging', text: 'Pack & Weigh' }
+                : { icon: 'fa-boxes', text: 'Pack & Count' };
+        }
+
         function onUnitChange() {
             const unit = document.getElementById('productUnit').value;
             document.getElementById('productPriceLabel').textContent = `Price (৳ / ${unit})`;
             document.getElementById('productStockLabel').textContent = `Stock (${unit})`;
             const stockInput = document.getElementById('productStock');
             stockInput.step = isWeightUnit(unit) ? '0.01' : '1';
-            document.getElementById('sellModeField').style.display = isWeightUnit(unit) ? 'block' : 'none';
+            document.getElementById('sellModeField').style.display = 'block';
+            onSellModeChange();
+        }
+
+        function onSellModeChange() {
+            const unit = document.getElementById('productUnit').value;
+            const sellMode = document.getElementById('productSellMode').value;
+            const hint = document.getElementById('sellModeHint');
+            if (!hint) return;
+
+            if (sellMode === 'loose') {
+                hint.textContent = unit === 'pcs'
+                    ? 'Counter staff will pack & count any quantity (e.g. eggs: 4, 6, 12, 30 pcs) and print a label for that exact count.'
+                    : 'Counter staff will weigh out any amount and print a label for that exact weight.';
+            } else {
+                hint.textContent = 'Sold as-is by its regular barcode — no packing step needed at the counter.';
+            }
         }
 
         function addProduct() {
@@ -2089,7 +2113,7 @@
             const name = document.getElementById('productName').value;
             const barcode = document.getElementById('productBarcode').value;
             const unit = document.getElementById('productUnit').value;
-            const sellMode = isWeightUnit(unit) ? document.getElementById('productSellMode').value : 'prepacked';
+            const sellMode = document.getElementById('productSellMode').value;
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseFloat(document.getElementById('productStock').value);
             const icon = document.getElementById('productIcon').value || '📦';
@@ -2278,12 +2302,15 @@
             packLabelProductId = productId;
 
             const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+            const isCount = product.unit === 'pcs';
+
             document.getElementById('packLabelProductInfo').innerHTML =
                 `${product.icon} <strong>${product.name}</strong><br>৳${product.price.toFixed(2)} / ${product.unit} · Stock: ${formatQty(product.stock, product.unit)} ${product.unit}`;
-            document.getElementById('packQtyLabel').textContent = `Weighed Quantity (${smallUnit})`;
+            document.getElementById('packQtyLabel').textContent = isCount ? 'Quantity (pcs)' : `Weighed Quantity (${smallUnit})`;
             document.getElementById('packQtyInput').value = '';
-            document.getElementById('packQtyInput').placeholder = smallUnit === 'g' || smallUnit === 'ml' ? 'e.g. 230' : '';
-            document.getElementById('packPricePreview').innerHTML = 'Enter the weighed amount to see the price.';
+            document.getElementById('packQtyInput').step = isCount ? '1' : 'any';
+            document.getElementById('packQtyInput').placeholder = isCount ? 'e.g. 12' : (smallUnit === 'g' || smallUnit === 'ml' ? 'e.g. 230' : '');
+            document.getElementById('packPricePreview').innerHTML = isCount ? 'Enter the count to see the price.' : 'Enter the weighed amount to see the price.';
             document.getElementById('packLabelModal').classList.add('active');
             document.getElementById('packQtyInput').focus();
         }
@@ -2296,11 +2323,13 @@
         function updatePackPricePreview() {
             const product = DB.products.find(p => p.id === packLabelProductId);
             if (!product) return;
-            const smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            const isCount = product.unit === 'pcs';
+            let smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            if (isCount) smallQty = Math.round(smallQty);
             const preview = document.getElementById('packPricePreview');
 
             if (!smallQty || smallQty <= 0) {
-                preview.innerHTML = 'Enter the weighed amount to see the price.';
+                preview.innerHTML = isCount ? 'Enter the count to see the price.' : 'Enter the weighed amount to see the price.';
                 return;
             }
 
@@ -2313,7 +2342,9 @@
                 return;
             }
 
-            preview.innerHTML = `<strong>${smallQty} ${smallUnit}</strong> (${formatQty(actualQty, product.unit)} ${product.unit}) → Price: <strong>৳ ${price.toFixed(2)}</strong>`;
+            preview.innerHTML = isCount
+                ? `<strong>${smallQty} pcs</strong> → Price: <strong>৳ ${price.toFixed(2)}</strong>`
+                : `<strong>${smallQty} ${smallUnit}</strong> (${formatQty(actualQty, product.unit)} ${product.unit}) → Price: <strong>৳ ${price.toFixed(2)}</strong>`;
         }
 
         function confirmPackLabel() {
@@ -2324,9 +2355,12 @@
             const product = DB.products.find(p => p.id === packLabelProductId);
             if (!product) return;
 
-            const smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            const isCount = product.unit === 'pcs';
+            let smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            if (isCount) smallQty = Math.round(smallQty);
+
             if (!smallQty || smallQty <= 0) {
-                alert('Enter a valid weighed quantity');
+                alert(isCount ? 'Enter a valid quantity' : 'Enter a valid weighed quantity');
                 return;
             }
 
@@ -2339,11 +2373,12 @@
             const price = actualQty * product.price;
             const packBarcode = encodePackBarcode(product.id, smallQty);
             const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+            const labelLine = isCount ? `Qty: ${smallQty} pcs` : `Net Wt: ${smallQty} ${smallUnit}`;
 
             document.getElementById('invoicePaper').innerHTML = `
                 <div style="text-align:center; padding: 10px 0;">
                     <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${product.icon} ${product.name}</div>
-                    <div style="font-size:12px; color:#555; margin-bottom:6px;">Net Wt: ${smallQty} ${smallUnit}</div>
+                    <div style="font-size:12px; color:#555; margin-bottom:6px;">${labelLine}</div>
                     <div style="font-size:16px; font-weight:700; margin-bottom:10px;">৳ ${price.toFixed(2)}</div>
                     <svg id="barcodeSvg" style="max-width:100%;"></svg>
                     <div style="font-family:'Courier New',monospace; font-size:12px; letter-spacing:2px; margin-top:4px;">${packBarcode}</div>
@@ -2353,7 +2388,7 @@
             renderBarcodeSVG(packBarcode, document.getElementById('barcodeSvg'));
             closePackLabelModal();
             document.getElementById('invoiceModal').classList.add('active');
-            logAudit('pack_label_printed', `${product.name}: ${smallQty}${smallUnit} pack label (৳${price.toFixed(2)}) — barcode ${packBarcode}`);
+            logAudit('pack_label_printed', `${product.name}: ${smallQty}${isCount ? 'pcs' : smallUnit} pack label (৳${price.toFixed(2)}) — barcode ${packBarcode}`);
         }
 
         // Reliable visual barcode renderer — every digit maps to a fixed-width bar/space
