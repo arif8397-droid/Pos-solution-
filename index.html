@@ -745,6 +745,45 @@
         }
         .color-swatch:hover { box-shadow: 0 0 0 2px #BA7517; }
 
+        /* EMOJI PICKER */
+        .emoji-picker-panel {
+            margin-top: 10px;
+            padding: 12px;
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            gap: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .emoji-picker-panel.hidden-banner { display: none; }
+
+        .emoji-option {
+            font-size: 20px;
+            text-align: center;
+            padding: 6px 0;
+            border-radius: 6px;
+            cursor: pointer;
+            background: white;
+            border: 1px solid #eee;
+        }
+
+        .emoji-option:hover { background: #eef5fb; border-color: #185FA5; }
+
+        .emoji-suggest-chip {
+            font-size: 18px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #fff8ec;
+            border: 1px solid #BA7517;
+        }
+
+        .emoji-suggest-chip:hover { background: #fdeecb; }
+
         /* INVOICE PREVIEW MODAL */
         .invoice-modal-content {
             background: white;
@@ -830,12 +869,6 @@
                 </div>
                 <button type="submit" class="btn-login">Login</button>
             </form>
-            <div class="demo-users">
-                <strong>Demo Credentials:</strong><br>
-                Admin: admin / 1234<br>
-                Scanner Ops: scanner / 1234<br>
-                Cashier: cashier / 1234
-            </div>
         </div>
     </div>
 
@@ -897,6 +930,10 @@
                                 <i class="fas fa-barcode" style="color: #185FA5; font-size: 18px;"></i>
                                 <input type="text" id="barcodeInput" class="barcode-input" placeholder="Ready to scan...">
                                 <span class="scanner-status"><i class="fas fa-dot-circle"></i> Active</span>
+                            </div>
+                            <div class="scanner-input-wrapper" style="margin-top: 8px;">
+                                <i class="fas fa-search" style="color: #BA7517; font-size: 18px;"></i>
+                                <input type="text" id="productSearchInput" class="barcode-input" placeholder="Or type product name to search...">
                             </div>
                             <div class="products-grid" id="productsGrid"></div>
                         </div>
@@ -966,7 +1003,7 @@
                                 <div class="form-grid">
                                     <div class="form-field">
                                         <label>Name</label>
-                                        <input type="text" id="productName" placeholder="Product name">
+                                        <input type="text" id="productName" placeholder="Product name" oninput="updateEmojiSuggestions()">
                                     </div>
                                     <div class="form-field">
                                         <label>Barcode</label>
@@ -982,10 +1019,15 @@
                                     </div>
                                     <div class="form-field">
                                         <label>Icon</label>
-                                        <input type="text" id="productIcon" placeholder="📦" maxlength="2" value="📦">
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <input type="text" id="productIcon" placeholder="📦" maxlength="2" value="📦" style="width: 50px; text-align:center; font-size:18px;" readonly onclick="toggleEmojiPicker()">
+                                            <button type="button" class="btn-edit" onclick="toggleEmojiPicker()" title="Choose emoji"><i class="fas fa-icons"></i></button>
+                                        </div>
+                                        <div id="emojiSuggestRow" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;"></div>
                                     </div>
                                     <button type="button" class="btn-add-product" onclick="addProduct()">Add</button>
                                 </div>
+                                <div id="emojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
                             </div>
                         </div>
 
@@ -1733,14 +1775,21 @@
         // ===== PRODUCTS =====
         function loadProducts() {
             const grid = document.getElementById('productsGrid');
-            grid.innerHTML = DB.products.map(p => `
+            const searchEl = document.getElementById('productSearchInput');
+            const query = searchEl ? searchEl.value.trim().toLowerCase() : '';
+
+            const filtered = query
+                ? DB.products.filter(p => p.name.toLowerCase().includes(query))
+                : DB.products;
+
+            grid.innerHTML = filtered.map(p => `
                 <div class="product-card" onclick="addToCart(${p.id})">
                     <div class="product-icon">${p.icon}</div>
                     <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${p.stock}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)}</div>
                 </div>
-            `).join('');
+            `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
 
         function loadProductsTable() {
@@ -1762,6 +1811,130 @@
                     </td>
                 </tr>
             `).join('');
+        }
+
+        // ===== EMOJI PICKER & AUTO-RECOMMENDATION =====
+        const EMOJI_PICKER_SET = [
+            '📦','🍅','🥒','🧅','🥕','🥔','🌽','🥦','🥬','🍆',
+            '🥛','🧀','🥚','🍞','🍌','🍎','🍊','🍇','🍉','🍓',
+            '🍋','🥭','🍍','🥥','🍒','🍑','🍐','🌶️','🧄','🧅',
+            '🍚','🍜','🍝','🌾','🫘','🧂','🍯','🧈','🥫','🫙',
+            '🥤','🧃','☕','🍵','🧊','🍰','🍪','🍫','🍬','🍩',
+            '🧴','🧼','🧻','🪥','🧽','🧹','🔋','💡','🧯','🪒',
+            '👕','👖','🧦','👟','👜','🎒','📓','✏️','🖊️','📱'
+        ];
+
+        const EMOJI_KEYWORD_MAP = [
+            { keywords: ['tomato'], emoji: '🍅' },
+            { keywords: ['cucumber'], emoji: '🥒' },
+            { keywords: ['onion'], emoji: '🧅' },
+            { keywords: ['carrot'], emoji: '🥕' },
+            { keywords: ['potato'], emoji: '🥔' },
+            { keywords: ['corn'], emoji: '🌽' },
+            { keywords: ['broccoli'], emoji: '🥦' },
+            { keywords: ['lettuce', 'cabbage', 'spinach'], emoji: '🥬' },
+            { keywords: ['eggplant', 'brinjal'], emoji: '🍆' },
+            { keywords: ['chili', 'chilli', 'pepper'], emoji: '🌶️' },
+            { keywords: ['garlic'], emoji: '🧄' },
+            { keywords: ['milk'], emoji: '🥛' },
+            { keywords: ['cheese'], emoji: '🧀' },
+            { keywords: ['egg'], emoji: '🥚' },
+            { keywords: ['bread', 'bun'], emoji: '🍞' },
+            { keywords: ['butter'], emoji: '🧈' },
+            { keywords: ['honey'], emoji: '🍯' },
+            { keywords: ['banana'], emoji: '🍌' },
+            { keywords: ['apple'], emoji: '🍎' },
+            { keywords: ['orange'], emoji: '🍊' },
+            { keywords: ['grape'], emoji: '🍇' },
+            { keywords: ['watermelon'], emoji: '🍉' },
+            { keywords: ['strawberry'], emoji: '🍓' },
+            { keywords: ['lemon', 'lime'], emoji: '🍋' },
+            { keywords: ['mango'], emoji: '🥭' },
+            { keywords: ['pineapple'], emoji: '🍍' },
+            { keywords: ['coconut'], emoji: '🥥' },
+            { keywords: ['rice', 'chal'], emoji: '🍚' },
+            { keywords: ['noodle'], emoji: '🍜' },
+            { keywords: ['pasta'], emoji: '🍝' },
+            { keywords: ['flour', 'atta', 'wheat'], emoji: '🌾' },
+            { keywords: ['lentil', 'dal', 'pulse', 'bean'], emoji: '🫘' },
+            { keywords: ['salt'], emoji: '🧂' },
+            { keywords: ['oil', 'ghee'], emoji: '🥫' },
+            { keywords: ['sauce', 'jar', 'pickle', 'achar'], emoji: '🫙' },
+            { keywords: ['juice'], emoji: '🧃' },
+            { keywords: ['drink', 'soda', 'cola', 'water'], emoji: '🥤' },
+            { keywords: ['coffee'], emoji: '☕' },
+            { keywords: ['tea', 'cha'], emoji: '🍵' },
+            { keywords: ['ice'], emoji: '🧊' },
+            { keywords: ['cake'], emoji: '🍰' },
+            { keywords: ['biscuit', 'cookie'], emoji: '🍪' },
+            { keywords: ['chocolate'], emoji: '🍫' },
+            { keywords: ['candy', 'sweet'], emoji: '🍬' },
+            { keywords: ['donut', 'doughnut'], emoji: '🍩' },
+            { keywords: ['soap'], emoji: '🧼' },
+            { keywords: ['shampoo', 'lotion', 'detergent'], emoji: '🧴' },
+            { keywords: ['tissue', 'toilet paper', 'napkin'], emoji: '🧻' },
+            { keywords: ['toothbrush'], emoji: '🪥' },
+            { keywords: ['sponge', 'scrub'], emoji: '🧽' },
+            { keywords: ['broom'], emoji: '🧹' },
+            { keywords: ['battery'], emoji: '🔋' },
+            { keywords: ['bulb', 'light'], emoji: '💡' },
+            { keywords: ['razor', 'blade'], emoji: '🪒' },
+            { keywords: ['shirt', 'tshirt', 't-shirt'], emoji: '👕' },
+            { keywords: ['pant', 'trouser'], emoji: '👖' },
+            { keywords: ['sock'], emoji: '🧦' },
+            { keywords: ['shoe', 'sandal'], emoji: '👟' },
+            { keywords: ['bag'], emoji: '👜' },
+            { keywords: ['notebook', 'copy', 'register'], emoji: '📓' },
+            { keywords: ['pen'], emoji: '🖊️' },
+            { keywords: ['pencil'], emoji: '✏️' },
+            { keywords: ['phone', 'mobile'], emoji: '📱' }
+        ];
+
+        function suggestEmojisForName(name) {
+            const lower = (name || '').toLowerCase();
+            if (!lower.trim()) return [];
+            const matches = EMOJI_KEYWORD_MAP.filter(entry =>
+                entry.keywords.some(kw => lower.includes(kw))
+            );
+            // De-duplicate emoji while preserving order
+            const seen = new Set();
+            const result = [];
+            matches.forEach(m => {
+                if (!seen.has(m.emoji)) {
+                    seen.add(m.emoji);
+                    result.push(m.emoji);
+                }
+            });
+            return result.slice(0, 6);
+        }
+
+        function updateEmojiSuggestions() {
+            const name = document.getElementById('productName').value;
+            const suggestions = suggestEmojisForName(name);
+            const row = document.getElementById('emojiSuggestRow');
+            if (!row) return;
+
+            row.innerHTML = suggestions.map(e =>
+                `<span class="emoji-suggest-chip" onclick="selectEmoji('${e}')" title="Use this emoji">${e}</span>`
+            ).join('');
+        }
+
+        function toggleEmojiPicker() {
+            const panel = document.getElementById('emojiPickerPanel');
+            const isHidden = panel.classList.contains('hidden-banner');
+            if (isHidden) {
+                panel.innerHTML = EMOJI_PICKER_SET.map(e =>
+                    `<div class="emoji-option" onclick="selectEmoji('${e}')">${e}</div>`
+                ).join('');
+                panel.classList.remove('hidden-banner');
+            } else {
+                panel.classList.add('hidden-banner');
+            }
+        }
+
+        function selectEmoji(emoji) {
+            document.getElementById('productIcon').value = emoji;
+            document.getElementById('emojiPickerPanel').classList.add('hidden-banner');
         }
 
         function addProduct() {
@@ -1794,6 +1967,8 @@
             document.getElementById('productPrice').value = '';
             document.getElementById('productStock').value = '50';
             document.getElementById('productIcon').value = '📦';
+            document.getElementById('emojiSuggestRow').innerHTML = '';
+            document.getElementById('emojiPickerPanel').classList.add('hidden-banner');
 
             loadProducts();
             loadProductsTable();
@@ -1898,32 +2073,46 @@
             document.getElementById('invoiceModal').classList.add('active');
         }
 
-        // Minimal CODE128-style visual barcode renderer (visual representation, not a strict checksum-verified encoder)
-        function renderBarcodeSVG(code, svgEl) {
-            const barWidth = 2;
-            const barHeight = 60;
-            const digits = String(code).split('');
-            const patterns = '0123456789'.split('').reduce((acc, d, i) => {
-                // Deterministic pseudo-bar pattern per digit so the same barcode always renders identically
-                acc[d] = (i * 37 + 11) % 7 + 1;
-                return acc;
-            }, {});
+        // Reliable visual barcode renderer — every digit maps to a fixed-width bar/space
+        // pattern from a lookup table, so spacing is always even and bars are always visible
+        // (this is a visual representation for printed labels, not a scanner-decodable symbology).
+        const BARCODE_DIGIT_PATTERNS = {
+            '0': [1,1,2,2], '1': [2,1,1,2], '2': [1,2,1,2], '3': [2,2,1,1],
+            '4': [1,1,3,1], '5': [3,1,1,1], '6': [1,3,1,1], '7': [1,1,1,3],
+            '8': [3,1,2,1], '9': [1,2,3,1]
+        };
 
-            let x = 4;
+        function renderBarcodeSVG(code, svgEl) {
+            const unit = 2.2;
+            const barHeight = 60;
+            const digits = String(code).replace(/[^0-9]/g, '').split('');
+
+            let x = 6;
             let bars = '';
-            digits.forEach((d, i) => {
-                const seed = (parseInt(d, 10) || 0) + i;
-                const widths = [1, 2, 1, 3, 1].map((w, j) => ((seed + j) % 3) + 1);
-                widths.forEach((w, j) => {
+
+            // Start guard bars
+            bars += `<rect x="${x}" y="0" width="${unit}" height="${barHeight}" fill="#000"></rect>`;
+            x += unit * 2;
+
+            digits.forEach(d => {
+                const pattern = BARCODE_DIGIT_PATTERNS[d] || [1,1,1,1];
+                pattern.forEach((w, j) => {
+                    const barW = w * unit;
                     if (j % 2 === 0) {
-                        bars += `<rect x="${x}" y="0" width="${w * barWidth}" height="${barHeight}" fill="#000"></rect>`;
+                        bars += `<rect x="${x}" y="0" width="${barW}" height="${barHeight}" fill="#000"></rect>`;
                     }
-                    x += w * barWidth;
+                    x += barW;
                 });
+                x += unit; // gap between digit groups
             });
 
-            svgEl.setAttribute('viewBox', `0 0 ${x + 4} ${barHeight}`);
-            svgEl.setAttribute('width', Math.min(x + 4, 300));
+            // End guard bars
+            x += unit;
+            bars += `<rect x="${x}" y="0" width="${unit}" height="${barHeight}" fill="#000"></rect>`;
+            x += unit * 2;
+
+            svgEl.setAttribute('viewBox', `0 0 ${x + 6} ${barHeight}`);
+            svgEl.setAttribute('width', Math.min(x + 6, 320));
             svgEl.setAttribute('height', barHeight);
             svgEl.innerHTML = bars;
         }
@@ -1935,9 +2124,17 @@
                 e.target.value = '';
                 if (barcode) {
                     const product = DB.products.find(p => p.barcode === barcode);
-                    if (product) addToCart(product.id);
+                    if (product) {
+                        addToCart(product.id);
+                    } else {
+                        alert(`No product found for barcode: ${barcode}`);
+                    }
                 }
             }
+        });
+
+        document.getElementById('productSearchInput').addEventListener('input', () => {
+            loadProducts();
         });
 
         document.getElementById('barcodeVerifyInput') && document.getElementById('barcodeVerifyInput').addEventListener('keypress', (e) => {
