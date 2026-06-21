@@ -914,20 +914,41 @@
                             </div>
                             <div class="payment-section">
                                 <div class="summary-row">
+                                    <span>Subtotal</span>
+                                    <span id="subtotalDisplay">৳ 0.00</span>
+                                </div>
+                                <div class="payment-input">
+                                    <input type="number" id="discountInput" placeholder="Discount ৳" min="0" step="0.01" onchange="updateTotals()" oninput="updateTotals()">
+                                    <select id="discountType" onchange="updateTotals()" style="flex: 0 0 70px;">
+                                        <option value="amount">৳</option>
+                                        <option value="percent">%</option>
+                                    </select>
+                                </div>
+                                <div class="summary-row total">
                                     <span>Total</span>
                                     <span id="total">৳ 0.00</span>
                                 </div>
+                                <div class="form-field" style="margin-bottom: 8px;">
+                                    <select id="paymentMethod" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;">
+                                        <option value="Cash">💵 Cash</option>
+                                        <option value="bKash">📱 bKash</option>
+                                        <option value="Nagad">📱 Nagad</option>
+                                        <option value="Rocket">📱 Rocket</option>
+                                        <option value="Card">💳 Card</option>
+                                        <option value="Bank Transfer">🏦 Bank Transfer</option>
+                                    </select>
+                                </div>
                                 <div class="payment-input">
-                                    <input type="number" id="cashAmount" placeholder="Cash" step="0.01">
+                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
                                     <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
                                 </div>
                                 <div class="change-display" id="changeDisplay" style="display:none;"></div>
                                 <div class="action-buttons">
-                                    <button class="btn-action btn-checkout" id="checkoutBtn" onclick="checkout()" disabled>
-                                        <i class="fas fa-credit-card"></i> Complete
+                                    <button class="btn-action btn-checkout" id="checkoutBtn" onclick="checkout()" disabled title="F9">
+                                        <i class="fas fa-credit-card"></i> Complete (F9)
                                     </button>
-                                    <button class="btn-action btn-secondary" onclick="previewCart()"><i class="fas fa-eye"></i> Preview</button>
-                                    <button class="btn-action btn-secondary" onclick="clearCart()">Clear</button>
+                                    <button class="btn-action btn-secondary" onclick="previewCart()" title="F8"><i class="fas fa-eye"></i> Preview (F8)</button>
+                                    <button class="btn-action btn-secondary" onclick="clearCart()" title="F10">Clear (F10)</button>
                                 </div>
                             </div>
                         </div>
@@ -1011,6 +1032,33 @@
 
                 <!-- REPORTS -->
                 <div id="reports" class="section">
+                    <div class="products-container" style="margin-bottom: 20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+                            <h3 style="color: #185FA5; margin: 0;"><i class="fas fa-chart-line"></i> Sales Trend (Last 7 Days)</h3>
+                            <div>
+                                <button class="btn-edit" onclick="exportSalesCSV()"><i class="fas fa-file-csv"></i> Export Sales CSV</button>
+                                <button class="btn-edit" onclick="exportStockCSV()"><i class="fas fa-file-csv"></i> Export Stock CSV</button>
+                            </div>
+                        </div>
+                        <canvas id="salesChart" height="90"></canvas>
+                    </div>
+
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h4><i class="fas fa-cash-register"></i> Shift / Daily Closing Summary</h4>
+                        <div class="form-grid" style="grid-template-columns: 1fr 1fr auto; align-items:end;">
+                            <div class="form-field">
+                                <label>From Date</label>
+                                <input type="date" id="shiftFromDate">
+                            </div>
+                            <div class="form-field">
+                                <label>To Date</label>
+                                <input type="date" id="shiftToDate">
+                            </div>
+                            <button type="button" class="btn-add-product" onclick="generateShiftReport()"><i class="fas fa-calculator"></i> Generate</button>
+                        </div>
+                        <div id="shiftReportOutput" style="margin-top: 14px;"></div>
+                    </div>
+
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                         <div class="products-container">
                             <h3 style="color: #185FA5; margin-bottom: 16px;"><i class="fas fa-cash-register"></i> Sales</h3>
@@ -1023,6 +1071,7 @@
                                     <tr>
                                         <th>Date</th>
                                         <th>Items</th>
+                                        <th>Pay</th>
                                         <th>Amount</th>
                                         <th>Action</th>
                                     </tr>
@@ -1174,6 +1223,12 @@
                                 <i class="fas fa-eye"></i> Preview Sample Invoice
                             </button>
                         </div>
+
+                        <!-- Audit Log -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(last 50 actions)</span></h4>
+                            <div id="auditLogBody" style="max-height: 280px; overflow-y: auto; font-size: 12px;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1225,11 +1280,12 @@
             edit_stock: 'Edit Stock Quantity',
             delete_product: 'Delete Products',
             delete_sales: 'Delete Sales Records',
+            process_refund: 'Process Returns/Refunds',
             view_reports: 'View Reports',
             admin: 'Full Admin Access'
         };
 
-        const DB = {
+        const DEFAULT_DB = {
             products: [
                 { id: 1, name: 'Tomato', barcode: '8901001001001', price: 60, stock: 50, icon: '🍅' },
                 { id: 2, name: 'Cucumber', barcode: '8901001001002', price: 40, stock: 30, icon: '🥒' },
@@ -1240,15 +1296,15 @@
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
-                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','view_reports','admin'] },
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','view_reports','admin'] },
                 { id: 'scanner', name: 'Scanner Operator', password: '1234', role: 'scanner',
                   permissions: ['view_reports'] },
                 { id: 'cashier', name: 'Cashier', password: '1234', role: 'cashier',
                   permissions: ['pos'] }
             ],
             sales: [],
-            currentUser: null,
             invoiceCounter: 0,
+            auditLog: [],
             settings: {
                 lowStockThreshold: 10,
                 brandTitle: 'POS System',
@@ -1265,6 +1321,61 @@
                 taxPercent: 0
             }
         };
+
+        const STORAGE_KEY = 'pos_system_db_v1';
+
+        function loadDB() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const saved = JSON.parse(raw);
+                    // Merge saved data over defaults so new fields added in updates still exist
+                    return {
+                        products: saved.products || DEFAULT_DB.products,
+                        users: saved.users || DEFAULT_DB.users,
+                        sales: saved.sales || [],
+                        invoiceCounter: saved.invoiceCounter || 0,
+                        auditLog: saved.auditLog || [],
+                        currentUser: null,
+                        settings: Object.assign({}, DEFAULT_DB.settings, saved.settings || {})
+                    };
+                }
+            } catch (e) {
+                console.error('Failed to load saved data, using defaults', e);
+            }
+            return Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_DB)), { currentUser: null });
+        }
+
+        function saveDB() {
+            try {
+                const toSave = {
+                    products: DB.products,
+                    users: DB.users,
+                    sales: DB.sales,
+                    invoiceCounter: DB.invoiceCounter,
+                    auditLog: DB.auditLog,
+                    settings: DB.settings
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+            } catch (e) {
+                console.error('Failed to save data', e);
+            }
+        }
+
+        function logAudit(action, details) {
+            DB.auditLog.push({
+                id: Date.now() + Math.random(),
+                time: new Date().toLocaleString(),
+                user: DB.currentUser ? DB.currentUser.id : 'system',
+                action,
+                details
+            });
+            // Keep the log from growing unbounded
+            if (DB.auditLog.length > 500) DB.auditLog = DB.auditLog.slice(-500);
+            saveDB();
+        }
+
+        const DB = loadDB();
 
         let cart = [];
         let editingProductId = null;
@@ -1284,6 +1395,7 @@
                 DB.currentUser = user;
                 document.getElementById('loginScreen').classList.add('hidden');
                 document.getElementById('appScreen').classList.remove('hidden');
+                logAudit('login', `${user.id} logged in`);
                 initializeApp();
             } else {
                 document.getElementById('errorMsg').textContent = 'Invalid credentials';
@@ -1377,7 +1489,8 @@
 
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
-            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); }
+            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); }
+            if (section === 'reports') { renderSalesChart(); }
         }
 
         function logout() {
@@ -1409,6 +1522,7 @@
             const val = parseInt(document.getElementById('lowStockThreshold').value);
             DB.settings.lowStockThreshold = isNaN(val) ? 10 : val;
             checkLowStock();
+            saveDB();
         }
 
         // ===== BRANDING =====
@@ -1418,12 +1532,14 @@
             DB.settings.brandIcon = document.getElementById('brandIcon').value || 'fas fa-store';
             DB.settings.brandBgColor = document.getElementById('brandBgColor').value || '#185FA5';
             renderBranding();
+            saveDB();
         }
 
         function setBrandColor(hex) {
             document.getElementById('brandBgColor').value = hex;
             DB.settings.brandBgColor = hex;
             renderBranding();
+            saveDB();
         }
 
         function renderBranding() {
@@ -1476,6 +1592,7 @@
             DB.settings.invoiceFooter = document.getElementById('invoiceFooter').value;
             DB.settings.showTax = document.getElementById('showTax').value === 'true';
             DB.settings.taxPercent = parseFloat(document.getElementById('taxPercent').value) || 0;
+            saveDB();
         }
 
         function previewSampleInvoice() {
@@ -1522,6 +1639,7 @@
             document.getElementById('newUserRole').value = '';
 
             loadUsersList();
+            logAudit('user_created', `Created user "${id}" (${role})`);
             alert(`✓ User "${id}" created with default Cashier-level access. Click "Permissions" to customize.`);
         }
 
@@ -1552,6 +1670,7 @@
             if (newPass === null) return;
             if (!newPass.trim()) { alert('Password cannot be empty'); return; }
             user.password = newPass.trim();
+            logAudit('password_changed', `Password changed for "${userId}"`);
             alert(`✓ Password updated for ${user.id}`);
         }
 
@@ -1566,6 +1685,7 @@
                 document.getElementById('permEditorBody').innerHTML = 'Click "Permissions" next to a user below to edit what they can access and do.';
             }
             loadUsersList();
+            logAudit('user_deleted', `Removed user "${userId}"`);
         }
 
         function openPermEditor(userId) {
@@ -1602,6 +1722,7 @@
                 user.permissions = user.permissions.filter(p => p !== perm);
             }
             loadUsersList();
+            logAudit('permission_changed', `${enabled ? 'Granted' : 'Revoked'} "${perm}" for "${userId}"`);
 
             // If the editing user is currently logged in (rare in single-session demo), refresh their UI
             if (DB.currentUser && DB.currentUser.id === userId) {
@@ -1636,6 +1757,7 @@
                     </td>
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
+                        <button class="btn-edit" onclick="printBarcodeLabel(${p.id})"><i class="fas fa-barcode"></i> Label</button>
                         ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
                     </td>
                 </tr>
@@ -1664,10 +1786,8 @@
                 return;
             }
 
-            DB.products.push({
-                id: Math.max(...DB.products.map(p => p.id)) + 1,
-                name, barcode, price, stock, icon
-            });
+            const newId = DB.products.length ? Math.max(...DB.products.map(p => p.id)) + 1 : 1;
+            DB.products.push({ id: newId, name, barcode, price, stock, icon });
 
             document.getElementById('productName').value = '';
             document.getElementById('productBarcode').value = '';
@@ -1679,7 +1799,12 @@
             loadProductsTable();
             loadBarcodeList();
             checkLowStock();
-            alert('✓ Product added successfully!');
+            logAudit('product_added', `Added "${name}" (barcode ${barcode})`);
+            saveDB();
+
+            if (confirm(`✓ Product added!\n\nPrint a barcode label for "${name}" now?`)) {
+                printBarcodeLabel(newId);
+            }
         }
 
         function editProduct(productId) {
@@ -1704,10 +1829,13 @@
             }
 
             const product = DB.products.find(p => p.id === editingProductId);
+            const oldPrice = product.price;
             product.price = newPrice;
             closeEditModal();
             loadProducts();
             loadProductsTable();
+            logAudit('price_changed', `"${product.name}" price changed ৳${oldPrice} → ৳${newPrice}`);
+            saveDB();
             alert('✓ Price updated!');
         }
 
@@ -1726,11 +1854,14 @@
             if (newStock === null) return;
             const val = parseInt(newStock);
             if (isNaN(val) || val < 0) { alert('Enter a valid stock number'); return; }
+            const oldStock = product.stock;
             product.stock = val;
             loadProducts();
             loadProductsTable();
             loadReports();
             checkLowStock();
+            logAudit('stock_changed', `"${product.name}" stock changed ${oldStock} → ${val}`);
+            saveDB();
         }
 
         function deleteProduct(idx) {
@@ -1738,13 +1869,63 @@
                 alert('Permission denied');
                 return;
             }
+            const product = DB.products[idx];
             if (confirm('Delete this product?')) {
                 DB.products.splice(idx, 1);
                 loadProducts();
                 loadProductsTable();
                 loadBarcodeList();
                 checkLowStock();
+                logAudit('product_deleted', `Deleted "${product.name}" (barcode ${product.barcode})`);
+                saveDB();
             }
+        }
+
+        // ===== BARCODE LABEL GENERATION =====
+        function printBarcodeLabel(productId) {
+            const product = DB.products.find(p => p.id === productId);
+            if (!product) return;
+
+            document.getElementById('invoicePaper').innerHTML = `
+                <div style="text-align:center; padding: 10px 0;">
+                    <div style="font-size:14px; font-weight:700; margin-bottom:4px;">${product.icon} ${product.name}</div>
+                    <div style="font-size:13px; margin-bottom:10px;">৳ ${product.price.toFixed(2)}</div>
+                    <svg id="barcodeSvg" style="max-width:100%;"></svg>
+                    <div style="font-family:'Courier New',monospace; font-size:12px; letter-spacing:2px; margin-top:4px;">${product.barcode}</div>
+                </div>
+            `;
+            renderBarcodeSVG(product.barcode, document.getElementById('barcodeSvg'));
+            document.getElementById('invoiceModal').classList.add('active');
+        }
+
+        // Minimal CODE128-style visual barcode renderer (visual representation, not a strict checksum-verified encoder)
+        function renderBarcodeSVG(code, svgEl) {
+            const barWidth = 2;
+            const barHeight = 60;
+            const digits = String(code).split('');
+            const patterns = '0123456789'.split('').reduce((acc, d, i) => {
+                // Deterministic pseudo-bar pattern per digit so the same barcode always renders identically
+                acc[d] = (i * 37 + 11) % 7 + 1;
+                return acc;
+            }, {});
+
+            let x = 4;
+            let bars = '';
+            digits.forEach((d, i) => {
+                const seed = (parseInt(d, 10) || 0) + i;
+                const widths = [1, 2, 1, 3, 1].map((w, j) => ((seed + j) % 3) + 1);
+                widths.forEach((w, j) => {
+                    if (j % 2 === 0) {
+                        bars += `<rect x="${x}" y="0" width="${w * barWidth}" height="${barHeight}" fill="#000"></rect>`;
+                    }
+                    x += w * barWidth;
+                });
+            });
+
+            svgEl.setAttribute('viewBox', `0 0 ${x + 4} ${barHeight}`);
+            svgEl.setAttribute('width', Math.min(x + 4, 300));
+            svgEl.setAttribute('height', barHeight);
+            svgEl.innerHTML = bars;
         }
 
         // BARCODE SCANNING
@@ -1874,17 +2055,29 @@
                 cart = [];
                 updateCart();
                 document.getElementById('cashAmount').value = '';
+                document.getElementById('discountInput').value = '';
                 document.getElementById('changeDisplay').style.display = 'none';
             }
         }
 
-        function updateTotals() {
+        function getCartTotals() {
             const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-            document.getElementById('total').textContent = '৳ ' + subtotal.toFixed(2);
+            const discountRaw = parseFloat(document.getElementById('discountInput').value) || 0;
+            const discountType = document.getElementById('discountType').value;
+            let discountAmount = discountType === 'percent' ? subtotal * (discountRaw / 100) : discountRaw;
+            discountAmount = Math.max(0, Math.min(discountAmount, subtotal));
+            const total = subtotal - discountAmount;
+            return { subtotal, discountAmount, discountType, discountRaw, total };
+        }
+
+        function updateTotals() {
+            const { subtotal, discountAmount, total } = getCartTotals();
+            document.getElementById('subtotalDisplay').textContent = '৳ ' + subtotal.toFixed(2);
+            document.getElementById('total').textContent = '৳ ' + total.toFixed(2);
         }
 
         function calculateChange() {
-            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const { total } = getCartTotals();
             const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
             const change = cashAmount - total;
 
@@ -1907,10 +2100,11 @@
                 return;
             }
 
-            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const { subtotal, discountAmount, total } = getCartTotals();
+            const paymentMethod = document.getElementById('paymentMethod').value;
             const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
 
-            if (cashAmount < total) {
+            if (paymentMethod === 'Cash' && cashAmount < total) {
                 alert('Insufficient payment');
                 return;
             }
@@ -1927,22 +2121,30 @@
                 id: Date.now(),
                 invoiceNo,
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                subtotal,
+                discountAmount,
                 amount: total,
-                cashAmount,
-                change: cashAmount - total,
-                cashier: DB.currentUser.id
+                paymentMethod,
+                cashAmount: paymentMethod === 'Cash' ? cashAmount : total,
+                change: paymentMethod === 'Cash' ? (cashAmount - total) : 0,
+                cashier: DB.currentUser.id,
+                status: 'completed',
+                refundedAmount: 0
             };
             DB.sales.push(sale);
 
             cart = [];
             document.getElementById('cashAmount').value = '';
+            document.getElementById('discountInput').value = '';
             document.getElementById('changeDisplay').style.display = 'none';
             updateCart();
             loadProducts();
             loadProductsTable();
             loadReports();
             checkLowStock();
+            logAudit('sale_completed', `${invoiceNo}: ৳${total.toFixed(2)} via ${paymentMethod}`);
+            saveDB();
 
             openInvoicePreview(sale);
         }
@@ -1953,14 +2155,18 @@
                 alert('Cart is empty');
                 return;
             }
+            const { subtotal, discountAmount, total } = getCartTotals();
             const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
-            const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const paymentMethod = document.getElementById('paymentMethod').value;
 
             const draftSale = {
                 invoiceNo: 'DRAFT',
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, price: i.price, quantity: i.quantity })),
+                subtotal,
+                discountAmount,
                 amount: total,
+                paymentMethod,
                 cashAmount: cashAmount || undefined,
                 change: cashAmount ? (cashAmount - total) : undefined,
                 cashier: DB.currentUser.id
@@ -1970,9 +2176,11 @@
 
         function openInvoicePreview(sale) {
             const s = DB.settings;
-            const subtotal = sale.items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
-            const taxAmount = s.showTax ? subtotal * (s.taxPercent / 100) : 0;
-            const grandTotal = subtotal + taxAmount;
+            const subtotal = sale.subtotal !== undefined ? sale.subtotal : sale.items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+            const discountAmount = sale.discountAmount || 0;
+            const afterDiscount = subtotal - discountAmount;
+            const taxAmount = s.showTax ? afterDiscount * (s.taxPercent / 100) : 0;
+            const grandTotal = sale.amount !== undefined ? sale.amount + taxAmount : afterDiscount + taxAmount;
 
             const itemsHtml = sale.items.map(i => `
                 <tr>
@@ -1987,6 +2195,12 @@
                 ? `<img src="${s.shopLogo}" style="max-height:48px; max-width:140px;" alt="logo">`
                 : `<div class="invoice-shop-logo">${s.shopLogo || '🛒'}</div>`;
 
+            const statusBadge = sale.status === 'refunded'
+                ? '<div style="text-align:center; color:#e74c3c; font-weight:700; margin-bottom:8px;">⟲ FULLY REFUNDED</div>'
+                : sale.status === 'partial_refund'
+                ? `<div style="text-align:center; color:#BA7517; font-weight:700; margin-bottom:8px;">⟲ PARTIALLY REFUNDED (৳${(sale.refundedAmount||0).toFixed(2)})</div>`
+                : '';
+
             document.getElementById('invoicePaper').innerHTML = `
                 <div class="invoice-shop-header">
                     ${logoHtml}
@@ -1997,9 +2211,11 @@
                     </div>
                 </div>
                 <div class="invoice-divider"></div>
+                ${statusBadge}
                 <div class="invoice-meta-row"><span>Invoice No:</span><strong>${sale.invoiceNo || '—'}</strong></div>
                 <div class="invoice-meta-row"><span>Date:</span><span>${sale.date}</span></div>
                 <div class="invoice-meta-row"><span>Cashier:</span><span>${sale.cashier}</span></div>
+                ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${sale.paymentMethod}</span></div>` : ''}
                 <div class="invoice-divider"></div>
                 <table class="invoice-items-table">
                     <thead>
@@ -2010,11 +2226,12 @@
                 <div class="invoice-divider"></div>
                 <div class="invoice-totals">
                     <div class="row"><span>Subtotal</span><span>৳ ${subtotal.toFixed(2)}</span></div>
+                    ${discountAmount > 0 ? `<div class="row"><span>Discount</span><span>− ৳ ${discountAmount.toFixed(2)}</span></div>` : ''}
                     ${s.showTax ? `<div class="row"><span>Tax (${s.taxPercent}%)</span><span>৳ ${taxAmount.toFixed(2)}</span></div>` : ''}
                     <div class="row grand"><span>Total</span><span>৳ ${grandTotal.toFixed(2)}</span></div>
                     ${sale.cashAmount !== undefined ? `
-                        <div class="row"><span>Cash Received</span><span>৳ ${sale.cashAmount.toFixed(2)}</span></div>
-                        <div class="row"><span>Change</span><span>৳ ${sale.change.toFixed(2)}</span></div>
+                        <div class="row"><span>${sale.paymentMethod === 'Cash' || !sale.paymentMethod ? 'Cash Received' : 'Amount Paid'}</span><span>৳ ${sale.cashAmount.toFixed(2)}</span></div>
+                        <div class="row"><span>Change</span><span>৳ ${(sale.change||0).toFixed(2)}</span></div>
                     ` : ''}
                 </div>
                 ${s.invoiceFooter ? `<div class="invoice-footer-note">${s.invoiceFooter}</div>` : ''}
@@ -2028,6 +2245,14 @@
         }
 
         // Click outside modal content to close; Escape key closes any open modal
+        // Redraw the sales chart on resize so it isn't stuck at a stale width
+        window.addEventListener('resize', () => {
+            const reportsSection = document.getElementById('reports');
+            if (reportsSection && reportsSection.classList.contains('active')) {
+                renderSalesChart();
+            }
+        });
+
         document.querySelectorAll('.modal').forEach(modal => {
             modal.addEventListener('click', (e) => {
                 if (e.target === modal) {
@@ -2039,11 +2264,28 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+                return;
+            }
+
+            // POS keyboard shortcuts — only act while the POS section is visible and no modal is open
+            const posActive = document.getElementById('pos') && document.getElementById('pos').classList.contains('active');
+            const modalOpen = document.querySelector('.modal.active');
+            if (!posActive || modalOpen) return;
+
+            if (e.key === 'F8') {
+                e.preventDefault();
+                previewCart();
+            } else if (e.key === 'F9') {
+                e.preventDefault();
+                if (!document.getElementById('checkoutBtn').disabled) checkout();
+            } else if (e.key === 'F10') {
+                e.preventDefault();
+                clearCart();
             }
         });
 
         function loadReports() {
-            const totalSales = DB.sales.reduce((sum, s) => sum + s.amount, 0);
+            const totalSales = DB.sales.reduce((sum, s) => sum + (s.amount - (s.refundedAmount || 0)), 0);
             document.getElementById('totalSales').textContent = '৳ ' + totalSales.toFixed(2);
 
             const totalStock = DB.products.reduce((sum, p) => sum + p.stock, 0);
@@ -2051,17 +2293,22 @@
 
             const salesTbody = document.getElementById('salesTableBody');
             const recentSales = DB.sales.slice(-8).reverse();
-            salesTbody.innerHTML = recentSales.map(s => `
+            salesTbody.innerHTML = recentSales.map(s => {
+                const statusTag = s.status === 'refunded' ? ' <span style="color:#e74c3c; font-size:10px;">(REFUNDED)</span>'
+                    : s.status === 'partial_refund' ? ' <span style="color:#BA7517; font-size:10px;">(PARTIAL)</span>' : '';
+                return `
                 <tr>
-                    <td>${s.date}</td>
+                    <td style="font-size: 11px;">${s.date}${statusTag}</td>
                     <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${i.quantity}`).join(', ')}</td>
+                    <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
-                        <button class="btn-edit" onclick="reprintInvoice(${s.id})"><i class="fas fa-print"></i></button>
+                        <button class="btn-edit" onclick="reprintInvoice(${s.id})" title="Reprint"><i class="fas fa-print"></i></button>
+                        ${hasPerm('process_refund') && s.status !== 'refunded' ? `<button class="btn-edit" style="background:#e67e22;" onclick="openRefundDialog(${s.id})" title="Refund"><i class="fas fa-undo"></i></button>` : ''}
                         ${hasPerm('delete_sales') ? `<button class="btn-delete-product" onclick="deleteSale(${s.id})">Delete</button>` : ''}
                     </td>
                 </tr>
-            `).join('') || '<tr><td colspan="4" style="text-align: center; color: #999;">No sales</td></tr>';
+            `}).join('') || '<tr><td colspan="5" style="text-align: center; color: #999;">No sales</td></tr>';
 
             const stockTbody = document.getElementById('stockReportBody');
             stockTbody.innerHTML = DB.products.map(p => `
@@ -2071,6 +2318,8 @@
                     <td>${p.stock <= DB.settings.lowStockThreshold ? '<span style="color: #e74c3c;">⚠ Low</span>' : '<span style="color: #27ae60;">✓ OK</span>'}</td>
                 </tr>
             `).join('');
+
+            renderSalesChart();
         }
 
         function reprintInvoice(saleId) {
@@ -2085,8 +2334,240 @@
                 return;
             }
             if (!confirm('Delete this sales record? This cannot be undone.')) return;
+            const sale = DB.sales.find(s => s.id === saleId);
             DB.sales = DB.sales.filter(s => s.id !== saleId);
             loadReports();
+            logAudit('sale_deleted', `Deleted sale ${sale ? sale.invoiceNo : saleId}`);
+            saveDB();
+        }
+
+        // ===== RETURNS / REFUNDS =====
+        function openRefundDialog(saleId) {
+            if (!hasPerm('process_refund')) { alert('Permission denied'); return; }
+            const sale = DB.sales.find(s => s.id === saleId);
+            if (!sale) return;
+
+            const remaining = sale.amount - (sale.refundedAmount || 0);
+            const choice = confirm(
+                `Refund for ${sale.invoiceNo}\nSale Total: ৳${sale.amount.toFixed(2)}\nAlready refunded: ৳${(sale.refundedAmount||0).toFixed(2)}\nRemaining refundable: ৳${remaining.toFixed(2)}\n\nClick OK for FULL refund, or Cancel to enter a PARTIAL amount.`
+            );
+
+            if (choice) {
+                processRefund(saleId, remaining, true);
+            } else {
+                const amountStr = prompt(`Enter partial refund amount (max ৳${remaining.toFixed(2)}):`, remaining.toFixed(2));
+                if (amountStr === null) return;
+                const amount = parseFloat(amountStr);
+                if (isNaN(amount) || amount <= 0 || amount > remaining) {
+                    alert('Invalid refund amount');
+                    return;
+                }
+                processRefund(saleId, amount, false);
+            }
+        }
+
+        function processRefund(saleId, amount, restoreStock) {
+            const sale = DB.sales.find(s => s.id === saleId);
+            if (!sale) return;
+
+            sale.refundedAmount = (sale.refundedAmount || 0) + amount;
+            sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
+
+            if (restoreStock) {
+                sale.items.forEach(item => {
+                    const product = DB.products.find(p => p.id === item.id || p.name === item.name);
+                    if (product) product.stock += item.quantity;
+                });
+            }
+
+            loadReports();
+            loadProducts();
+            loadProductsTable();
+            checkLowStock();
+            logAudit('refund_processed', `${sale.invoiceNo}: refunded ৳${amount.toFixed(2)} (${sale.status})`);
+            saveDB();
+            alert(`✓ Refund of ৳${amount.toFixed(2)} processed for ${sale.invoiceNo}`);
+        }
+
+        // ===== AUDIT LOG =====
+        function loadAuditLog() {
+            const body = document.getElementById('auditLogBody');
+            if (!body) return;
+            const recent = DB.auditLog.slice(-50).reverse();
+            body.innerHTML = recent.map(a => `
+                <div style="padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
+                    <strong style="color:#185FA5;">${a.user}</strong> · ${a.action.replace(/_/g, ' ')}
+                    <span style="color:#999; float:right;">${a.time}</span>
+                    <div style="color:#666;">${a.details || ''}</div>
+                </div>
+            `).join('') || '<p style="color:#999;">No activity yet.</p>';
+        }
+
+        // ===== SALES CHART (vanilla canvas, no external deps) =====
+        function renderSalesChart() {
+            const canvas = document.getElementById('salesChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const width = canvas.clientWidth || 600;
+            const height = 90;
+            canvas.width = width;
+            canvas.height = height;
+            ctx.clearRect(0, 0, width, height);
+
+            // Build last 7 days totals
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                days.push({ key: d.toLocaleDateString(), label: d.toLocaleDateString(undefined, { weekday: 'short' }), total: 0 });
+            }
+            DB.sales.forEach(s => {
+                const saleDateKey = new Date(s.id).toLocaleDateString();
+                const day = days.find(d => d.key === saleDateKey);
+                if (day) day.total += (s.amount - (s.refundedAmount || 0));
+            });
+
+            const maxVal = Math.max(...days.map(d => d.total), 1);
+            const padding = 24;
+            const barAreaWidth = width - padding * 2;
+            const barWidth = barAreaWidth / days.length * 0.6;
+            const gap = barAreaWidth / days.length;
+
+            days.forEach((d, i) => {
+                const barHeight = (d.total / maxVal) * (height - 30);
+                const x = padding + i * gap + (gap - barWidth) / 2;
+                const y = height - 20 - barHeight;
+
+                ctx.fillStyle = '#185FA5';
+                ctx.fillRect(x, y, barWidth, barHeight);
+
+                ctx.fillStyle = '#666';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(d.label, x + barWidth / 2, height - 6);
+
+                if (d.total > 0) {
+                    ctx.fillStyle = '#185FA5';
+                    ctx.font = '9px Arial';
+                    ctx.fillText('৳' + Math.round(d.total), x + barWidth / 2, y - 4);
+                }
+            });
+        }
+
+        // ===== SHIFT / DAILY CLOSING REPORT =====
+        function generateShiftReport() {
+            const fromStr = document.getElementById('shiftFromDate').value;
+            const toStr = document.getElementById('shiftToDate').value;
+            if (!fromStr || !toStr) {
+                alert('Please select both From and To dates');
+                return;
+            }
+            const from = new Date(fromStr + 'T00:00:00');
+            const to = new Date(toStr + 'T23:59:59');
+
+            const filtered = DB.sales.filter(s => {
+                const d = new Date(s.id);
+                return d >= from && d <= to;
+            });
+
+            const byMethod = {};
+            const byCashier = {};
+            let grossTotal = 0, refundsTotal = 0;
+
+            filtered.forEach(s => {
+                const method = s.paymentMethod || 'Cash';
+                const net = s.amount - (s.refundedAmount || 0);
+                byMethod[method] = (byMethod[method] || 0) + net;
+                byCashier[s.cashier] = (byCashier[s.cashier] || 0) + net;
+                grossTotal += s.amount;
+                refundsTotal += (s.refundedAmount || 0);
+            });
+
+            const netTotal = grossTotal - refundsTotal;
+
+            const methodRows = Object.entries(byMethod).map(([m, v]) => `
+                <div class="row"><span>${m}</span><span>৳ ${v.toFixed(2)}</span></div>
+            `).join('');
+            const cashierRows = Object.entries(byCashier).map(([c, v]) => `
+                <div class="row"><span>${c}</span><span>৳ ${v.toFixed(2)}</span></div>
+            `).join('');
+
+            document.getElementById('shiftReportOutput').innerHTML = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+                    <div>
+                        <h5 style="color:#185FA5; margin-bottom:8px; font-size:13px;">By Payment Method</h5>
+                        <div class="invoice-totals" style="font-family:inherit;">${methodRows || '<p style="color:#999; font-size:12px;">No data</p>'}</div>
+                    </div>
+                    <div>
+                        <h5 style="color:#185FA5; margin-bottom:8px; font-size:13px;">By Cashier</h5>
+                        <div class="invoice-totals" style="font-family:inherit;">${cashierRows || '<p style="color:#999; font-size:12px;">No data</p>'}</div>
+                    </div>
+                    <div>
+                        <h5 style="color:#185FA5; margin-bottom:8px; font-size:13px;">Summary</h5>
+                        <div class="invoice-totals" style="font-family:inherit;">
+                            <div class="row"><span>Transactions</span><span>${filtered.length}</span></div>
+                            <div class="row"><span>Gross Sales</span><span>৳ ${grossTotal.toFixed(2)}</span></div>
+                            <div class="row"><span>Refunds</span><span>− ৳ ${refundsTotal.toFixed(2)}</span></div>
+                            <div class="row grand"><span>Net Total</span><span>৳ ${netTotal.toFixed(2)}</span></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ===== CSV / EXCEL EXPORT =====
+        function downloadCSV(filename, rows) {
+            const csvContent = rows.map(row =>
+                row.map(cell => {
+                    const str = String(cell ?? '');
+                    return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+                }).join(',')
+            ).join('\r\n');
+
+            const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        function exportSalesCSV() {
+            const rows = [['Invoice No', 'Date', 'Items', 'Subtotal', 'Discount', 'Amount', 'Refunded', 'Payment Method', 'Cashier', 'Status']];
+            DB.sales.forEach(s => {
+                rows.push([
+                    s.invoiceNo,
+                    s.date,
+                    s.items.map(i => `${i.name} x${i.quantity}`).join('; '),
+                    (s.subtotal ?? s.amount).toFixed(2),
+                    (s.discountAmount || 0).toFixed(2),
+                    s.amount.toFixed(2),
+                    (s.refundedAmount || 0).toFixed(2),
+                    s.paymentMethod || 'Cash',
+                    s.cashier,
+                    s.status || 'completed'
+                ]);
+            });
+            downloadCSV(`sales_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            logAudit('export', 'Exported sales CSV');
+        }
+
+        function exportStockCSV() {
+            const rows = [['Name', 'Barcode', 'Price', 'Stock', 'Status']];
+            DB.products.forEach(p => {
+                rows.push([
+                    p.name,
+                    p.barcode,
+                    p.price.toFixed(2),
+                    p.stock,
+                    p.stock <= DB.settings.lowStockThreshold ? 'Low Stock' : 'OK'
+                ]);
+            });
+            downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            logAudit('export', 'Exported stock CSV');
         }
 
         // Ensure login page reflects current branding settings immediately on load
