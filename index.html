@@ -1423,6 +1423,7 @@
             delete_product: 'Delete Products',
             delete_sales: 'Delete Sales Records',
             process_refund: 'Process Returns/Refunds',
+            pack_weigh: 'Pack & Weigh Items',
             view_reports: 'View Reports',
             admin: 'Full Admin Access'
         };
@@ -1438,7 +1439,7 @@
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
-                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','view_reports','admin'] },
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','view_reports','admin'] },
                 { id: 'scanner', name: 'Scanner Operator', password: '1234', role: 'scanner',
                   permissions: ['view_reports'] },
                 { id: 'cashier', name: 'Cashier', password: '1234', role: 'cashier',
@@ -1915,7 +1916,7 @@
                     <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
-                    ${isWeightUnit(p.unit) && p.sellMode === 'loose' ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                    ${isWeightUnit(p.unit) && p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                 </div>
             `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
@@ -1935,7 +1936,7 @@
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
                         <button class="btn-edit" onclick="printBarcodeLabel(${p.id})"><i class="fas fa-barcode"></i> Label</button>
-                        ${isWeightUnit(p.unit) && p.sellMode === 'loose' ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
+                        ${isWeightUnit(p.unit) && p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                         ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
                     </td>
                 </tr>
@@ -2268,6 +2269,10 @@
         }
 
         function openPackLabelDialog(productId) {
+            if (!hasPerm('pack_weigh')) {
+                alert('You don\'t have permission to pack & weigh items');
+                return;
+            }
             const product = DB.products.find(p => p.id === productId);
             if (!product) return;
             packLabelProductId = productId;
@@ -2312,6 +2317,10 @@
         }
 
         function confirmPackLabel() {
+            if (!hasPerm('pack_weigh')) {
+                alert('You don\'t have permission to pack & weigh items');
+                return;
+            }
             const product = DB.products.find(p => p.id === packLabelProductId);
             if (!product) return;
 
