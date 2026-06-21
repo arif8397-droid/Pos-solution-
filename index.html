@@ -1382,6 +1382,26 @@
         </div>
     </div>
 
+    <!-- PACK & WEIGH LABEL MODAL -->
+    <div id="packLabelModal" class="modal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-weight-hanging"></i> Pack & Weigh</h2>
+                <button class="close-modal" onclick="closePackLabelModal()">✕</button>
+            </div>
+            <div id="packLabelProductInfo" style="font-size:13px; color:#666; margin-bottom:12px;"></div>
+            <div class="form-field" style="margin-bottom: 14px;">
+                <label id="packQtyLabel">Weighed Quantity</label>
+                <input type="number" id="packQtyInput" min="0.001" step="0.01" placeholder="e.g. 0.23" oninput="updatePackPricePreview()">
+            </div>
+            <div class="return-summary-box" id="packPricePreview"></div>
+            <div style="display: flex; gap: 8px; margin-top:14px;">
+                <button class="btn-action btn-checkout" style="flex:1;" onclick="confirmPackLabel()"><i class="fas fa-print"></i> Print Pack Label</button>
+                <button class="btn-action btn-secondary" style="flex:1;" onclick="closePackLabelModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // ===== PERMISSION DEFINITIONS =====
         const ALL_PERMISSIONS = {
@@ -1867,6 +1887,7 @@
                     <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
+                    ${isWeightUnit(p.unit) ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                 </div>
             `).join('') || '<p style="color:#999; padding: 16px; grid-column: 1/-1; text-align:center;">No products match your search.</p>';
         }
@@ -1886,6 +1907,7 @@
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
                         <button class="btn-edit" onclick="printBarcodeLabel(${p.id})"><i class="fas fa-barcode"></i> Label</button>
+                        ${isWeightUnit(p.unit) ? `<button class="btn-edit" style="background:#8e44ad;" onclick="openPackLabelDialog(${p.id})"><i class="fas fa-weight-hanging"></i> Pack & Weigh</button>` : ''}
                         ${hasPerm('delete_product') ? `<button class="btn-delete-product" onclick="deleteProduct(${idx})">Delete</button>` : ''}
                     </td>
                 </tr>
@@ -2159,13 +2181,139 @@
             document.getElementById('invoicePaper').innerHTML = `
                 <div style="text-align:center; padding: 10px 0;">
                     <div style="font-size:14px; font-weight:700; margin-bottom:4px;">${product.icon} ${product.name}</div>
-                    <div style="font-size:13px; margin-bottom:10px;">৳ ${product.price.toFixed(2)}</div>
+                    <div style="font-size:13px; margin-bottom:10px;">৳ ${product.price.toFixed(2)} / ${product.unit}</div>
                     <svg id="barcodeSvg" style="max-width:100%;"></svg>
                     <div style="font-family:'Courier New',monospace; font-size:12px; letter-spacing:2px; margin-top:4px;">${product.barcode}</div>
                 </div>
             `;
             renderBarcodeSVG(product.barcode, document.getElementById('barcodeSvg'));
             document.getElementById('invoiceModal').classList.add('active');
+        }
+
+        // ===== PACK & WEIGH LABELS (pre-packed weighed items) =====
+        // Encodes product + exact weighed quantity into a 13-digit internal-use barcode
+        // (prefix "20" mirrors the real-world EAN-13 "in-store use" range for weighed goods),
+        // so scanning a printed pack label at checkout rings up the pre-calculated price —
+        // no re-weighing or manual entry needed at the till.
+        let packLabelProductId = null;
+
+        function encodePackBarcode(productId, gramsOrMl) {
+            const pid = String(productId).padStart(5, '0').slice(-5);
+            const qty = String(Math.round(gramsOrMl)).padStart(5, '0').slice(-5);
+            const body = '20' + pid + qty; // 12 digits
+            let sum = 0;
+            for (let i = 0; i < body.length; i++) {
+                const digit = parseInt(body[i], 10);
+                sum += (i % 2 === 0) ? digit : digit * 3;
+            }
+            const checkDigit = (10 - (sum % 10)) % 10;
+            return body + checkDigit;
+        }
+
+        function decodePackBarcode(barcode) {
+            if (!barcode || barcode.length !== 13 || !barcode.startsWith('20')) return null;
+            const body = barcode.slice(0, 12);
+            let sum = 0;
+            for (let i = 0; i < body.length; i++) {
+                const digit = parseInt(body[i], 10);
+                sum += (i % 2 === 0) ? digit : digit * 3;
+            }
+            const expectedCheck = (10 - (sum % 10)) % 10;
+            const actualCheck = parseInt(barcode[12], 10);
+            if (expectedCheck !== actualCheck) return null;
+
+            const productId = parseInt(barcode.slice(2, 7), 10);
+            const gramsOrMl = parseInt(barcode.slice(7, 12), 10);
+            return { productId, gramsOrMl };
+        }
+
+        // Converts a quantity in the product's actual unit (kg/l) to the smaller base
+        // unit (g/ml) used for barcode encoding, and back.
+        function toBaseUnits(qty, unit) {
+            return (unit === 'kg' || unit === 'l') ? qty * 1000 : qty;
+        }
+        function fromBaseUnits(baseQty, unit) {
+            return (unit === 'kg' || unit === 'l') ? baseQty / 1000 : baseQty;
+        }
+
+        function openPackLabelDialog(productId) {
+            const product = DB.products.find(p => p.id === productId);
+            if (!product) return;
+            packLabelProductId = productId;
+
+            const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+            document.getElementById('packLabelProductInfo').innerHTML =
+                `${product.icon} <strong>${product.name}</strong><br>৳${product.price.toFixed(2)} / ${product.unit} · Stock: ${formatQty(product.stock, product.unit)} ${product.unit}`;
+            document.getElementById('packQtyLabel').textContent = `Weighed Quantity (${smallUnit})`;
+            document.getElementById('packQtyInput').value = '';
+            document.getElementById('packQtyInput').placeholder = smallUnit === 'g' || smallUnit === 'ml' ? 'e.g. 230' : '';
+            document.getElementById('packPricePreview').innerHTML = 'Enter the weighed amount to see the price.';
+            document.getElementById('packLabelModal').classList.add('active');
+            document.getElementById('packQtyInput').focus();
+        }
+
+        function closePackLabelModal() {
+            document.getElementById('packLabelModal').classList.remove('active');
+            packLabelProductId = null;
+        }
+
+        function updatePackPricePreview() {
+            const product = DB.products.find(p => p.id === packLabelProductId);
+            if (!product) return;
+            const smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            const preview = document.getElementById('packPricePreview');
+
+            if (!smallQty || smallQty <= 0) {
+                preview.innerHTML = 'Enter the weighed amount to see the price.';
+                return;
+            }
+
+            const actualQty = fromBaseUnits(smallQty, product.unit);
+            const price = actualQty * product.price;
+            const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+
+            if (actualQty > product.stock) {
+                preview.innerHTML = `<span style="color:#e74c3c;">⚠ Only ${formatQty(product.stock, product.unit)} ${product.unit} in stock — this exceeds available stock.</span>`;
+                return;
+            }
+
+            preview.innerHTML = `<strong>${smallQty} ${smallUnit}</strong> (${formatQty(actualQty, product.unit)} ${product.unit}) → Price: <strong>৳ ${price.toFixed(2)}</strong>`;
+        }
+
+        function confirmPackLabel() {
+            const product = DB.products.find(p => p.id === packLabelProductId);
+            if (!product) return;
+
+            const smallQty = parseFloat(document.getElementById('packQtyInput').value);
+            if (!smallQty || smallQty <= 0) {
+                alert('Enter a valid weighed quantity');
+                return;
+            }
+
+            const actualQty = fromBaseUnits(smallQty, product.unit);
+            if (actualQty > product.stock) {
+                alert(`Only ${formatQty(product.stock, product.unit)} ${product.unit} available in stock.`);
+                return;
+            }
+
+            const price = actualQty * product.price;
+            const packBarcode = encodePackBarcode(product.id, smallQty);
+            const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+
+            document.getElementById('invoicePaper').innerHTML = `
+                <div style="text-align:center; padding: 10px 0;">
+                    <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${product.icon} ${product.name}</div>
+                    <div style="font-size:12px; color:#555; margin-bottom:6px;">Net Wt: ${smallQty} ${smallUnit}</div>
+                    <div style="font-size:16px; font-weight:700; margin-bottom:10px;">৳ ${price.toFixed(2)}</div>
+                    <svg id="barcodeSvg" style="max-width:100%;"></svg>
+                    <div style="font-family:'Courier New',monospace; font-size:12px; letter-spacing:2px; margin-top:4px;">${packBarcode}</div>
+                    <div style="font-size:10px; color:#999; margin-top:4px;">Packed: ${new Date().toLocaleString()}</div>
+                </div>
+            `;
+            renderBarcodeSVG(packBarcode, document.getElementById('barcodeSvg'));
+            closePackLabelModal();
+            document.getElementById('invoiceModal').classList.add('active');
+            logAudit('pack_label_printed', `${product.name}: ${smallQty}${smallUnit} pack label (৳${price.toFixed(2)}) — barcode ${packBarcode}`);
         }
 
         // Reliable visual barcode renderer — every digit maps to a fixed-width bar/space
@@ -2218,6 +2366,8 @@
                 const barcode = e.target.value.trim();
                 e.target.value = '';
                 if (barcode) {
+                    if (addPackFromBarcode(barcode)) return;
+
                     const product = DB.products.find(p => p.barcode === barcode);
                     if (product) {
                         addToCart(product.id);
@@ -2302,13 +2452,43 @@
                 return;
             }
 
-            const existing = cart.find(item => item.id === productId);
+            const existing = cart.find(item => item.id === productId && !item.isPackedItem);
             if (existing) {
                 existing.quantity = Math.round((existing.quantity + getQtyStep(product.unit)) * 1000) / 1000;
             } else {
                 cart.push({ ...product, quantity: getQtyStep(product.unit) });
             }
             updateCart();
+        }
+
+        // Adds a pre-weighed, pre-priced pack (scanned from a printed Pack & Weigh label)
+        // as its own fixed cart line — it does not merge with loose/manual quantities of
+        // the same product, since each physical pack has its own exact weighed amount.
+        function addPackFromBarcode(barcode) {
+            const decoded = decodePackBarcode(barcode);
+            if (!decoded) return false;
+
+            const product = DB.products.find(p => p.id === decoded.productId);
+            if (!product) {
+                alert('Pack label refers to a product that no longer exists.');
+                return true; // handled (as an error), don't fall through to normal lookup
+            }
+
+            const actualQty = fromBaseUnits(decoded.gramsOrMl, product.unit);
+            if (actualQty > product.stock + 0.0001) {
+                alert(`Not enough stock for this pack. Available: ${formatQty(product.stock, product.unit)} ${product.unit}`);
+                return true;
+            }
+
+            const smallUnit = product.unit === 'kg' ? 'g' : product.unit === 'l' ? 'ml' : product.unit;
+            cart.push({
+                ...product,
+                quantity: actualQty,
+                isPackedItem: true,
+                packLabel: `${decoded.gramsOrMl} ${smallUnit} (packed)`
+            });
+            updateCart();
+            return true;
         }
 
         function updateCart() {
@@ -2322,14 +2502,18 @@
 
             cartDiv.innerHTML = cart.map((item, index) => {
                 const isWeight = isWeightUnit(item.unit);
+                const isPacked = !!item.isPackedItem;
                 return `
                 <div class="cart-item">
                     <div class="cart-item-left">
-                        <div class="cart-item-name">${item.icon} ${item.name} <span style="color:#999; font-size:10px;">(${item.unit})</span></div>
+                        <div class="cart-item-name">${item.icon} ${item.name} <span style="color:#999; font-size:10px;">(${item.unit})</span>${isPacked ? ` <span style="color:#8e44ad; font-size:10px;">📦 ${item.packLabel}</span>` : ''}</div>
                         <div class="cart-item-qty">
-                            <button class="qty-btn" onclick="updateQty(${index}, -1)">−</button>
-                            <input type="number" class="qty-input" style="${isWeight ? 'width:50px;' : ''}" step="${isWeight ? '0.01' : '1'}" min="${getMinQty(item.unit)}" value="${item.quantity}" onchange="setQty(${index}, this.value)">
-                            <button class="qty-btn" onclick="updateQty(${index}, 1)">+</button>
+                            ${isPacked
+                                ? `<span style="font-size:12px; color:#666;">${formatQty(item.quantity, item.unit)} ${item.unit} (fixed)</span>`
+                                : `<button class="qty-btn" onclick="updateQty(${index}, -1)">−</button>
+                                   <input type="number" class="qty-input" style="${isWeight ? 'width:50px;' : ''}" step="${isWeight ? '0.01' : '1'}" min="${getMinQty(item.unit)}" value="${item.quantity}" onchange="setQty(${index}, this.value)">
+                                   <button class="qty-btn" onclick="updateQty(${index}, 1)">+</button>`
+                            }
                         </div>
                     </div>
                     <div class="cart-item-right">
@@ -2442,7 +2626,7 @@
                 id: Date.now(),
                 invoiceNo,
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity, returnedQty: 0 })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity, isPackedItem: !!i.isPackedItem, returnedQty: 0 })),
                 subtotal,
                 discountAmount,
                 amount: total,
@@ -2681,11 +2865,19 @@
                 const alreadyReturned = item.returnedQty || 0;
                 const remainingQty = item.quantity - alreadyReturned;
                 const isWeight = isWeightUnit(unit);
+                const isPacked = !!item.isPackedItem;
+
+                const inputControl = isPacked
+                    ? (alreadyReturned > 0
+                        ? `<span style="color:#999; font-size:11px;">already returned</span>`
+                        : `<label style="display:flex; align-items:center; gap:4px; font-size:12px;"><input type="checkbox" id="returnQty_${idx}" data-packed-qty="${remainingQty}" onchange="updateReturnSummary()"> Return pack</label>`)
+                    : `<input type="number" id="returnQty_${idx}" min="0" max="${remainingQty}" step="${isWeight ? '0.01' : '1'}" value="0" onchange="updateReturnSummary()" oninput="updateReturnSummary()">`;
+
                 return `
                     <div class="return-item-row">
-                        <span>${item.icon || ''} ${item.name}<br><span style="color:#999;">৳${item.price.toFixed(2)} / ${unit}${alreadyReturned ? ` · ${formatQty(alreadyReturned, unit)} ${unit} already returned` : ''}</span></span>
+                        <span>${item.icon || ''} ${item.name}${isPacked ? ' <span style="color:#8e44ad; font-size:10px;">📦 packed</span>' : ''}<br><span style="color:#999;">৳${item.price.toFixed(2)} / ${unit}${alreadyReturned ? ` · ${formatQty(alreadyReturned, unit)} ${unit} already returned` : ''}</span></span>
                         <span style="text-align:center;">${formatQty(item.quantity, unit)} ${unit}</span>
-                        <input type="number" id="returnQty_${idx}" min="0" max="${remainingQty}" step="${isWeight ? '0.01' : '1'}" value="0" onchange="updateReturnSummary()" oninput="updateReturnSummary()">
+                        ${inputControl}
                         <span style="text-align:right;">of ${formatQty(remainingQty, unit)} left</span>
                     </div>
                 `;
@@ -2704,6 +2896,15 @@
             updateReturnSummary();
         }
 
+        function getReturnQtyForIndex(idx) {
+            const el = document.getElementById(`returnQty_${idx}`);
+            if (!el) return 0;
+            if (el.type === 'checkbox') {
+                return el.checked ? parseFloat(el.dataset.packedQty) || 0 : 0;
+            }
+            return Math.max(0, parseFloat(el.value) || 0);
+        }
+
         function updateReturnSummary() {
             const sale = DB.sales.find(s => s.id === returnEditingSaleId);
             if (!sale) return;
@@ -2719,14 +2920,13 @@
             let refundTotal = 0;
             let totalQty = 0;
             sale.items.forEach((item, idx) => {
-                const el = document.getElementById(`returnQty_${idx}`);
-                const qty = el ? Math.max(0, parseFloat(el.value) || 0) : 0;
+                const qty = getReturnQtyForIndex(idx);
                 refundTotal += qty * item.price;
                 totalQty += qty;
             });
 
             box.innerHTML = totalQty > 0
-                ? `<strong>Returning ${totalQty} unit(s) total</strong> · Refund amount: ৳ ${refundTotal.toFixed(2)} · Stock will be restored for returned quantities.`
+                ? `<strong>Returning items</strong> · Refund amount: ৳ ${refundTotal.toFixed(2)} · Stock will be restored for returned quantities.`
                 : `Select quantities above to calculate refund, or use the cash-only adjustment.`;
         }
 
@@ -2760,8 +2960,7 @@
 
             // First pass: validate every requested quantity before changing any state
             const requestedQtys = sale.items.map((item, idx) => {
-                const el = document.getElementById(`returnQty_${idx}`);
-                const raw = el ? Math.max(0, parseFloat(el.value) || 0) : 0;
+                const raw = getReturnQtyForIndex(idx);
                 return Math.round(raw * 1000) / 1000;
             });
 
