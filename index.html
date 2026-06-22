@@ -1020,7 +1020,7 @@
                                     </select>
                                 </div>
                                 <div class="payment-input">
-                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01" onkeypress="if(event.key==='Enter'){event.preventDefault(); calculateChange();}">
+                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
                                     <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
                                 </div>
                                 <div class="change-display" id="changeDisplay" style="display:none;"></div>
@@ -3260,6 +3260,13 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+                return;
+            }
+
+            // Enter in the "Amount received" field triggers Calc, same reliability as F8/F9/F10
+            if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'cashAmount') {
+                e.preventDefault();
+                calculateChange();
                 return;
             }
 
