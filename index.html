@@ -1021,13 +1021,15 @@
                                 </div>
                                 <div class="form-field" id="transactionIdField" style="margin-bottom: 8px; display:none;">
                                     <label id="transactionIdLabel" style="font-size:11px; color:#666;">Transaction ID</label>
-                                    <input type="text" id="transactionIdInput" placeholder="e.g. 8N7K2X9P1Q" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;">
+                                    <input type="text" id="transactionIdInput" placeholder="e.g. 8N7K2X9P1Q" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;" oninput="onTransactionIdInput()">
                                 </div>
-                                <div class="payment-input">
-                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
-                                    <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
+                                <div id="cashPaymentFields">
+                                    <div class="payment-input">
+                                        <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
+                                        <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
+                                    </div>
+                                    <div class="change-display" id="changeDisplay" style="display:none;"></div>
                                 </div>
-                                <div class="change-display" id="changeDisplay" style="display:none;"></div>
                                 <div class="action-buttons">
                                     <button class="btn-action btn-checkout" id="checkoutBtn" onclick="checkout()" disabled title="F9">
                                         <i class="fas fa-credit-card"></i> Complete (F9)
@@ -3050,6 +3052,7 @@
                 document.getElementById('discountInput').value = '';
                 document.getElementById('transactionIdInput').value = '';
                 document.getElementById('changeDisplay').style.display = 'none';
+                document.getElementById('checkoutBtn').disabled = document.getElementById('paymentMethod').value === 'Cash';
             }
         }
 
@@ -3084,15 +3087,30 @@
 
         function onPaymentMethodChange() {
             const method = document.getElementById('paymentMethod').value;
-            const field = document.getElementById('transactionIdField');
-            const label = document.getElementById('transactionIdLabel');
+            const txnField = document.getElementById('transactionIdField');
+            const txnLabel = document.getElementById('transactionIdLabel');
+            const cashFields = document.getElementById('cashPaymentFields');
+            const checkoutBtn = document.getElementById('checkoutBtn');
 
             if (method === 'Cash') {
-                field.style.display = 'none';
+                txnField.style.display = 'none';
+                cashFields.style.display = 'block';
+                // Cash requires a calculated, non-negative change before Complete unlocks
+                checkoutBtn.disabled = true;
+                document.getElementById('changeDisplay').style.display = 'none';
             } else {
-                field.style.display = 'block';
-                label.textContent = `${method} Transaction ID`;
+                txnField.style.display = 'block';
+                txnLabel.textContent = `${method} Transaction ID`;
+                cashFields.style.display = 'none';
+                // No cash change involved — Complete unlocks once a Transaction ID is entered
+                checkoutBtn.disabled = !document.getElementById('transactionIdInput').value.trim();
             }
+        }
+
+        function onTransactionIdInput() {
+            const method = document.getElementById('paymentMethod').value;
+            if (method === 'Cash') return;
+            document.getElementById('checkoutBtn').disabled = !document.getElementById('transactionIdInput').value.trim();
         }
 
         function checkout() {
@@ -3160,6 +3178,7 @@
             document.getElementById('discountInput').value = '';
             document.getElementById('transactionIdInput').value = '';
             document.getElementById('changeDisplay').style.display = 'none';
+            document.getElementById('checkoutBtn').disabled = (paymentMethod === 'Cash');
             updateCart();
             loadProducts();
             loadProductsTable();
