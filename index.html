@@ -1484,10 +1484,22 @@
                     const products = (saved.products || DEFAULT_DB.products).map(p =>
                         Object.assign({ unit: 'pcs', sellMode: 'loose' }, p)
                     );
+
+                    // Any saved user who already holds the "admin" permission should always
+                    // have every permission that currently exists — otherwise an admin account
+                    // saved before a new permission was introduced would be missing it forever.
+                    const allPermKeys = Object.keys(ALL_PERMISSIONS);
+                    const users = (saved.users || DEFAULT_DB.users).map(u => {
+                        if (u.permissions && u.permissions.includes('admin')) {
+                            return Object.assign({}, u, { permissions: allPermKeys.slice() });
+                        }
+                        return u;
+                    });
+
                     // Merge saved data over defaults so new fields added in updates still exist
                     return {
                         products,
-                        users: saved.users || DEFAULT_DB.users,
+                        users,
                         sales: saved.sales || [],
                         invoiceCounter: saved.invoiceCounter || 0,
                         auditLog: saved.auditLog || [],
