@@ -1010,7 +1010,7 @@
                                     <span id="total">৳ 0.00</span>
                                 </div>
                                 <div class="form-field" style="margin-bottom: 8px;">
-                                    <select id="paymentMethod" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;">
+                                    <select id="paymentMethod" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;" onchange="onPaymentMethodChange()">
                                         <option value="Cash">💵 Cash</option>
                                         <option value="bKash">📱 bKash</option>
                                         <option value="Nagad">📱 Nagad</option>
@@ -1018,6 +1018,10 @@
                                         <option value="Card">💳 Card</option>
                                         <option value="Bank Transfer">🏦 Bank Transfer</option>
                                     </select>
+                                </div>
+                                <div class="form-field" id="transactionIdField" style="margin-bottom: 8px; display:none;">
+                                    <label id="transactionIdLabel" style="font-size:11px; color:#666;">Transaction ID</label>
+                                    <input type="text" id="transactionIdInput" placeholder="e.g. 8N7K2X9P1Q" style="width:100%; padding:8px; border:1px solid #d0d0d0; border-radius:6px; font-size:13px;">
                                 </div>
                                 <div class="payment-input">
                                     <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
@@ -1198,7 +1202,7 @@
                             <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-bottom: 10px;">
                                 <div class="form-field">
                                     <label>Search Invoice/Item</label>
-                                    <input type="text" id="salesSearchInput" placeholder="INV-00001 or item name" oninput="loadReports()">
+                                    <input type="text" id="salesSearchInput" placeholder="Invoice, item, or Txn ID" oninput="loadReports()">
                                 </div>
                                 <div class="form-field">
                                     <label>Cashier</label>
@@ -3044,6 +3048,7 @@
                 updateCart();
                 document.getElementById('cashAmount').value = '';
                 document.getElementById('discountInput').value = '';
+                document.getElementById('transactionIdInput').value = '';
                 document.getElementById('changeDisplay').style.display = 'none';
             }
         }
@@ -3077,6 +3082,19 @@
             document.getElementById('checkoutBtn').disabled = change < 0;
         }
 
+        function onPaymentMethodChange() {
+            const method = document.getElementById('paymentMethod').value;
+            const field = document.getElementById('transactionIdField');
+            const label = document.getElementById('transactionIdLabel');
+
+            if (method === 'Cash') {
+                field.style.display = 'none';
+            } else {
+                field.style.display = 'block';
+                label.textContent = `${method} Transaction ID`;
+            }
+        }
+
         function checkout() {
             if (!hasPerm('pos')) {
                 alert('POS access denied');
@@ -3091,9 +3109,15 @@
             const { subtotal, discountAmount, total } = getCartTotals();
             const paymentMethod = document.getElementById('paymentMethod').value;
             const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
+            const transactionId = document.getElementById('transactionIdInput').value.trim();
 
             if (paymentMethod === 'Cash' && cashAmount < total) {
                 alert('Insufficient payment');
+                return;
+            }
+            if (paymentMethod !== 'Cash' && !transactionId) {
+                alert(`Please enter the ${paymentMethod} Transaction ID before completing this sale.`);
+                document.getElementById('transactionIdInput').focus();
                 return;
             }
 
@@ -3122,6 +3146,7 @@
                 discountAmount,
                 amount: total,
                 paymentMethod,
+                transactionId: paymentMethod !== 'Cash' ? transactionId : '',
                 cashAmount: paymentMethod === 'Cash' ? cashAmount : total,
                 change: paymentMethod === 'Cash' ? (cashAmount - total) : 0,
                 cashier: DB.currentUser.id,
@@ -3133,13 +3158,14 @@
             cart = [];
             document.getElementById('cashAmount').value = '';
             document.getElementById('discountInput').value = '';
+            document.getElementById('transactionIdInput').value = '';
             document.getElementById('changeDisplay').style.display = 'none';
             updateCart();
             loadProducts();
             loadProductsTable();
             loadReports();
             checkLowStock();
-            logAudit('sale_completed', `${invoiceNo}: ৳${total.toFixed(2)} via ${paymentMethod}`);
+            logAudit('sale_completed', `${invoiceNo}: ৳${total.toFixed(2)} via ${paymentMethod}${transactionId ? ' (TxnID: ' + transactionId + ')' : ''}`);
             saveDB();
 
             openInvoicePreview(sale);
@@ -3154,6 +3180,7 @@
             const { subtotal, discountAmount, total } = getCartTotals();
             const cashAmount = parseFloat(document.getElementById('cashAmount').value) || 0;
             const paymentMethod = document.getElementById('paymentMethod').value;
+            const transactionId = document.getElementById('transactionIdInput').value.trim();
 
             const draftSale = {
                 invoiceNo: 'DRAFT',
@@ -3163,6 +3190,7 @@
                 discountAmount,
                 amount: total,
                 paymentMethod,
+                transactionId: paymentMethod !== 'Cash' ? transactionId : '',
                 cashAmount: cashAmount || undefined,
                 change: cashAmount ? (cashAmount - total) : undefined,
                 cashier: DB.currentUser.id
@@ -3212,6 +3240,7 @@
                 <div class="invoice-meta-row"><span>Date:</span><span>${sale.date}</span></div>
                 <div class="invoice-meta-row"><span>Cashier:</span><span>${sale.cashier}</span></div>
                 ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${sale.paymentMethod}</span></div>` : ''}
+                ${sale.transactionId ? `<div class="invoice-meta-row"><span>Txn ID:</span><strong>${sale.transactionId}</strong></div>` : ''}
                 <div class="invoice-divider"></div>
                 <table class="invoice-items-table">
                     <thead>
@@ -3323,6 +3352,7 @@
             if (searchQuery) {
                 filteredSales = filteredSales.filter(s =>
                     (s.invoiceNo || '').toLowerCase().includes(searchQuery) ||
+                    (s.transactionId || '').toLowerCase().includes(searchQuery) ||
                     s.items.some(i => i.name.toLowerCase().includes(searchQuery))
                 );
             }
@@ -3354,7 +3384,7 @@
                 <tr>
                     <td style="font-size: 11px;">${s.invoiceNo || ''}<br>${s.date}${statusTag}</td>
                     <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}<br><span style="color:#999;">by ${s.cashier}</span></td>
-                    <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}</td>
+                    <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}${s.transactionId ? `<br><span style="color:#999;">Txn: ${s.transactionId}</span>` : ''}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
                         <button class="btn-edit" onclick="reprintInvoice(${s.id})" title="Reprint"><i class="fas fa-print"></i></button>
@@ -3848,7 +3878,7 @@
         }
 
         function exportSalesCSV() {
-            const rows = [['Invoice No', 'Date', 'Items', 'Subtotal', 'Discount', 'Amount', 'Refunded', 'Payment Method', 'Cashier', 'Status']];
+            const rows = [['Invoice No', 'Date', 'Items', 'Subtotal', 'Discount', 'Amount', 'Refunded', 'Payment Method', 'Transaction ID', 'Cashier', 'Status']];
             DB.sales.forEach(s => {
                 rows.push([
                     s.invoiceNo,
@@ -3859,6 +3889,7 @@
                     s.amount.toFixed(2),
                     (s.refundedAmount || 0).toFixed(2),
                     s.paymentMethod || 'Cash',
+                    s.transactionId || '',
                     s.cashier,
                     s.status || 'completed'
                 ]);
