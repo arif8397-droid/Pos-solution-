@@ -843,6 +843,22 @@
             color: #222;
         }
 
+        .label-sheet-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .label-sheet-cell {
+            border: 1px dashed #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+
+        @media print {
+            .label-sheet-cell { border: none; }
+        }
+
         .invoice-shop-header { text-align: center; margin-bottom: 14px; }
         .invoice-shop-logo { font-size: 36px; margin-bottom: 4px; }
         .invoice-shop-name { font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
@@ -1056,6 +1072,10 @@
                                         <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:4px;"></div>
                                     </div>
                                     <div class="form-field">
+                                        <label id="productCostPriceLabel">Cost Price (৳ / pcs)</label>
+                                        <input type="number" id="productCostPrice" placeholder="0.00" step="0.01">
+                                    </div>
+                                    <div class="form-field">
                                         <label id="productPriceLabel">Price (৳ / pcs)</label>
                                         <input type="number" id="productPrice" placeholder="0.00" step="0.01">
                                     </div>
@@ -1147,6 +1167,27 @@
                         <div id="shiftReportOutput" style="margin-top: 14px;"></div>
                     </div>
 
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h4><i class="fas fa-chart-pie"></i> Profit Margin & Purchase History</h4>
+                        <div id="marginSummaryBox" style="margin-bottom:14px;"></div>
+                        <button class="btn-edit" onclick="exportPurchasesCSV()"><i class="fas fa-file-csv"></i> Export Purchase History CSV</button>
+                        <div style="max-height: 240px; overflow-y: auto; margin-top:10px;">
+                            <table class="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Product</th>
+                                        <th>Qty</th>
+                                        <th>Cost/Unit</th>
+                                        <th>Total Cost</th>
+                                        <th>Supplier</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="purchaseHistoryBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                         <div class="products-container">
                             <h3 style="color: #185FA5; margin-bottom: 16px;"><i class="fas fa-cash-register"></i> Sales</h3>
@@ -1154,6 +1195,26 @@
                                 <div style="font-size: 12px; opacity: 0.9;">Total Sales</div>
                                 <div style="font-size: 28px; font-weight: 700;" id="totalSales">৳ 0.00</div>
                             </div>
+                            <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-bottom: 10px;">
+                                <div class="form-field">
+                                    <label>Search Invoice/Item</label>
+                                    <input type="text" id="salesSearchInput" placeholder="INV-00001 or item name" oninput="loadReports()">
+                                </div>
+                                <div class="form-field">
+                                    <label>Cashier</label>
+                                    <select id="salesCashierFilter" onchange="loadReports()">
+                                        <option value="">All Cashiers</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Date Range</label>
+                                    <div style="display:flex; gap:4px;">
+                                        <input type="date" id="salesFromDate" onchange="loadReports()" style="font-size:11px;">
+                                        <input type="date" id="salesToDate" onchange="loadReports()" style="font-size:11px;">
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="btn-edit" style="margin-bottom:10px;" onclick="clearSalesFilters()"><i class="fas fa-times"></i> Clear Filters</button>
                             <table class="products-table">
                                 <thead>
                                     <tr>
@@ -1312,6 +1373,12 @@
                             </button>
                         </div>
 
+                        <!-- Trash Bin -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-trash-restore"></i> Trash Bin <span style="font-size:11px; color:#999; font-weight:400;">(deleted items kept for 30 days, then permanently removed)</span></h4>
+                            <div id="trashBinBody" style="max-height: 280px; overflow-y: auto;"></div>
+                        </div>
+
                         <!-- Audit Log -->
                         <div class="admin-card" style="grid-column: 1 / -1;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -1359,6 +1426,10 @@
                         <option value="loose">Pack on demand — weighed/counted at counter</option>
                         <option value="prepacked">Fixed unit — sold as a single sealed piece</option>
                     </select>
+                </div>
+                <div class="form-field">
+                    <label id="editCostPriceLabel">Cost Price (৳)</label>
+                    <input type="number" id="editCostPrice" step="0.01">
                 </div>
                 <div class="form-field">
                     <label id="editPriceLabel">Price (৳)</label>
@@ -1449,6 +1520,40 @@
         </div>
     </div>
 
+    <!-- RESTOCK / PURCHASE MODAL -->
+    <div id="restockModal" class="modal">
+        <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-truck-loading"></i> Restock Product</h2>
+                <button class="close-modal" onclick="closeRestockModal()">✕</button>
+            </div>
+            <div id="restockProductInfo" style="font-size:13px; color:#666; margin-bottom:12px;"></div>
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                <div class="form-field">
+                    <label id="restockQtyLabel">Quantity Received</label>
+                    <input type="number" id="restockQtyInput" min="0.001" step="0.01" oninput="updateRestockPreview()">
+                </div>
+                <div class="form-field">
+                    <label id="restockCostLabel">Cost Price (per unit)</label>
+                    <input type="number" id="restockCostInput" min="0" step="0.01" oninput="updateRestockPreview()">
+                </div>
+            </div>
+            <div class="form-field" style="margin-bottom: 12px;">
+                <label>Supplier (optional)</label>
+                <input type="text" id="restockSupplierInput" placeholder="e.g. Karim Traders">
+            </div>
+            <div class="form-field" style="margin-bottom: 12px;">
+                <label>Notes (optional)</label>
+                <input type="text" id="restockNotesInput" placeholder="e.g. Invoice #, delivery notes">
+            </div>
+            <div class="return-summary-box" id="restockPreview"></div>
+            <div style="display: flex; gap: 8px; margin-top:14px;">
+                <button class="btn-action btn-checkout" style="flex:1;" onclick="confirmRestock()"><i class="fas fa-check"></i> Add to Stock</button>
+                <button class="btn-action btn-secondary" style="flex:1;" onclick="closeRestockModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // ===== PERMISSION DEFINITIONS =====
         const ALL_PERMISSIONS = {
@@ -1466,13 +1571,13 @@
 
         const DEFAULT_DB = {
             products: [
-                { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', sellMode: 'loose', price: 60, stock: 50, icon: '🍅' },
-                { id: 2, name: 'Cucumber', barcode: '8901001001002', unit: 'pcs', sellMode: 'prepacked', price: 40, stock: 30, icon: '🥒' },
-                { id: 3, name: 'Onion', barcode: '8901001001003', unit: 'kg', sellMode: 'loose', price: 50, stock: 100, icon: '🧅' },
-                { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', sellMode: 'loose', price: 70, stock: 45, icon: '🥕' },
-                { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', sellMode: 'prepacked', price: 70, stock: 120, icon: '🥛' },
-                { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', sellMode: 'prepacked', price: 80, stock: 60, icon: '🍌' },
-                { id: 7, name: 'Egg', barcode: '8901001004001', unit: 'pcs', sellMode: 'loose', price: 12, stock: 300, icon: '🥚' },
+                { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', sellMode: 'loose', price: 60, costPrice: 40, stock: 50, icon: '🍅' },
+                { id: 2, name: 'Cucumber', barcode: '8901001001002', unit: 'pcs', sellMode: 'prepacked', price: 40, costPrice: 25, stock: 30, icon: '🥒' },
+                { id: 3, name: 'Onion', barcode: '8901001001003', unit: 'kg', sellMode: 'loose', price: 50, costPrice: 35, stock: 100, icon: '🧅' },
+                { id: 4, name: 'Carrot', barcode: '8901001001004', unit: 'kg', sellMode: 'loose', price: 70, costPrice: 48, stock: 45, icon: '🥕' },
+                { id: 5, name: 'Milk', barcode: '8901001003001', unit: 'l', sellMode: 'prepacked', price: 70, costPrice: 55, stock: 120, icon: '🥛' },
+                { id: 6, name: 'Banana', barcode: '8901001002002', unit: 'pcs', sellMode: 'prepacked', price: 80, costPrice: 55, stock: 60, icon: '🍌' },
+                { id: 7, name: 'Egg', barcode: '8901001004001', unit: 'pcs', sellMode: 'loose', price: 12, costPrice: 8.5, stock: 300, icon: '🥚' },
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
@@ -1483,6 +1588,8 @@
                   permissions: ['pos'] }
             ],
             sales: [],
+            purchases: [],
+            trash: [],
             invoiceCounter: 0,
             auditLog: [],
             settings: {
@@ -1510,7 +1617,7 @@
                 if (raw) {
                     const saved = JSON.parse(raw);
                     const products = (saved.products || DEFAULT_DB.products).map(p =>
-                        Object.assign({ unit: 'pcs', sellMode: 'loose' }, p)
+                        Object.assign({ unit: 'pcs', sellMode: 'loose', costPrice: 0 }, p)
                     );
 
                     // Any saved user who already holds the "admin" permission should always
@@ -1529,6 +1636,8 @@
                         products,
                         users,
                         sales: saved.sales || [],
+                        purchases: saved.purchases || [],
+                        trash: saved.trash || [],
                         invoiceCounter: saved.invoiceCounter || 0,
                         auditLog: saved.auditLog || [],
                         currentUser: null,
@@ -1547,6 +1656,8 @@
                     products: DB.products,
                     users: DB.users,
                     sales: DB.sales,
+                    purchases: DB.purchases,
+                    trash: DB.trash,
                     invoiceCounter: DB.invoiceCounter,
                     auditLog: DB.auditLog,
                     settings: DB.settings
@@ -1701,7 +1812,7 @@
 
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
-            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); }
+            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); }
             if (section === 'reports') { renderSalesChart(); }
         }
 
@@ -2000,7 +2111,8 @@
                     <td>৳ ${p.price.toFixed(2)} / ${p.unit}</td>
                     <td>
                         ${formatQty(p.stock, p.unit)} ${p.unit}
-                        ${hasPerm('edit_stock') ? `<button class="btn-edit" style="margin-left:6px;" onclick="editStock(${p.id})"><i class="fas fa-boxes"></i></button>` : ''}
+                        ${hasPerm('edit_stock') ? `<button class="btn-edit" style="margin-left:6px;" onclick="editStock(${p.id})" title="Quick correction"><i class="fas fa-boxes"></i></button>` : ''}
+                        ${hasPerm('edit_stock') ? `<button class="btn-edit" style="background:#27ae60;" onclick="openRestockModal(${p.id})" title="Record a purchase/restock"><i class="fas fa-truck-loading"></i> Restock</button>` : ''}
                     </td>
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
@@ -2148,6 +2260,7 @@
 
         function onUnitChange() {
             const unit = document.getElementById('productUnit').value;
+            document.getElementById('productCostPriceLabel').textContent = `Cost Price (৳ / ${unit})`;
             document.getElementById('productPriceLabel').textContent = `Price (৳ / ${unit})`;
             document.getElementById('productStockLabel').textContent = `Stock (${unit})`;
             const stockInput = document.getElementById('productStock');
@@ -2181,6 +2294,7 @@
             const barcode = document.getElementById('productBarcode').value;
             const unit = document.getElementById('productUnit').value;
             const sellMode = document.getElementById('productSellMode').value;
+            const costPrice = parseFloat(document.getElementById('productCostPrice').value) || 0;
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseFloat(document.getElementById('productStock').value);
             const icon = document.getElementById('productIcon').value || '📦';
@@ -2196,13 +2310,14 @@
             }
 
             const newId = DB.products.length ? Math.max(...DB.products.map(p => p.id)) + 1 : 1;
-            DB.products.push({ id: newId, name, barcode, unit, sellMode, price, stock, icon });
+            DB.products.push({ id: newId, name, barcode, unit, sellMode, costPrice, price, stock, icon });
 
             document.getElementById('productName').value = '';
             document.getElementById('productBarcode').value = '';
             document.getElementById('productUnit').value = 'pcs';
             document.getElementById('productSellMode').value = 'loose';
             onUnitChange();
+            document.getElementById('productCostPrice').value = '';
             document.getElementById('productPrice').value = '';
             document.getElementById('productStock').value = '50';
             document.getElementById('productIcon').value = '📦';
@@ -2235,6 +2350,7 @@
             document.getElementById('editBarcode').value = product.barcode;
             document.getElementById('editUnit').value = product.unit || 'pcs';
             document.getElementById('editSellMode').value = product.sellMode || 'loose';
+            document.getElementById('editCostPrice').value = product.costPrice || 0;
             document.getElementById('editPrice').value = product.price;
             document.getElementById('editIcon').value = product.icon || '📦';
 
@@ -2252,6 +2368,7 @@
 
         function onEditUnitChange() {
             const unit = document.getElementById('editUnit').value;
+            document.getElementById('editCostPriceLabel').textContent = `Cost Price (৳ / ${unit})`;
             document.getElementById('editPriceLabel').textContent = `Price (৳ / ${unit})`;
             document.getElementById('editStockLabel').textContent = `Stock (${unit})`;
             document.getElementById('editStock').step = isWeightUnit(unit) ? '0.01' : '1';
@@ -2283,6 +2400,7 @@
             const newBarcode = document.getElementById('editBarcode').value.trim();
             const newUnit = document.getElementById('editUnit').value;
             const newSellMode = document.getElementById('editSellMode').value;
+            const newCostPrice = parseFloat(document.getElementById('editCostPrice').value) || 0;
             const newPrice = parseFloat(document.getElementById('editPrice').value);
             const newIcon = document.getElementById('editIcon').value || '📦';
 
@@ -2303,6 +2421,11 @@
                 alert('Enter a valid price');
                 return;
             }
+            if (newCostPrice > newPrice) {
+                if (!confirm(`Cost price (৳${newCostPrice}) is higher than the sell price (৳${newPrice}) — this product would sell at a loss. Continue anyway?`)) {
+                    return;
+                }
+            }
             if (product.unit !== newUnit) {
                 const confirmed = confirm(
                     `Changing unit from "${product.unit}" to "${newUnit}" will NOT convert the stock number — ` +
@@ -2317,12 +2440,14 @@
             if (product.barcode !== newBarcode) changes.push(`barcode "${product.barcode}" → "${newBarcode}"`);
             if (product.unit !== newUnit) changes.push(`unit "${product.unit}" → "${newUnit}"`);
             if (product.sellMode !== newSellMode) changes.push(`sell mode "${product.sellMode}" → "${newSellMode}"`);
+            if ((product.costPrice || 0) !== newCostPrice) changes.push(`cost price ৳${product.costPrice || 0} → ৳${newCostPrice}`);
             if (product.price !== newPrice) changes.push(`price ৳${product.price} → ৳${newPrice}`);
 
             product.name = newName;
             product.barcode = newBarcode;
             product.unit = newUnit;
             product.sellMode = newSellMode;
+            product.costPrice = newCostPrice;
             product.price = newPrice;
             product.icon = newIcon;
 
@@ -2372,19 +2497,135 @@
             saveDB();
         }
 
+        // ===== RESTOCK / PURCHASE TRACKING =====
+        let restockProductId = null;
+
+        function openRestockModal(productId) {
+            if (!hasPerm('edit_stock')) {
+                alert('You don\'t have permission to restock products');
+                return;
+            }
+            const product = DB.products.find(p => p.id === productId);
+            if (!product) return;
+            restockProductId = productId;
+
+            document.getElementById('restockProductInfo').innerHTML =
+                `${product.icon} <strong>${product.name}</strong><br>Current stock: ${formatQty(product.stock, product.unit)} ${product.unit} · Last cost: ৳${(product.costPrice || 0).toFixed(2)}/${product.unit}`;
+            document.getElementById('restockQtyLabel').textContent = `Quantity Received (${product.unit})`;
+            document.getElementById('restockCostLabel').textContent = `Cost Price (৳ / ${product.unit})`;
+            document.getElementById('restockQtyInput').value = '';
+            document.getElementById('restockQtyInput').step = isWeightUnit(product.unit) ? '0.01' : '1';
+            document.getElementById('restockCostInput').value = product.costPrice || '';
+            document.getElementById('restockSupplierInput').value = '';
+            document.getElementById('restockNotesInput').value = '';
+            document.getElementById('restockPreview').innerHTML = 'Enter quantity and cost to see the total.';
+            document.getElementById('restockModal').classList.add('active');
+            document.getElementById('restockQtyInput').focus();
+        }
+
+        function closeRestockModal() {
+            document.getElementById('restockModal').classList.remove('active');
+            restockProductId = null;
+        }
+
+        function updateRestockPreview() {
+            const product = DB.products.find(p => p.id === restockProductId);
+            if (!product) return;
+            const qty = parseFloat(document.getElementById('restockQtyInput').value) || 0;
+            const cost = parseFloat(document.getElementById('restockCostInput').value) || 0;
+            const preview = document.getElementById('restockPreview');
+
+            if (qty <= 0) {
+                preview.innerHTML = 'Enter quantity and cost to see the total.';
+                return;
+            }
+
+            const totalCost = qty * cost;
+            const newStockLevel = product.stock + qty;
+            preview.innerHTML = `<strong>${formatQty(qty, product.unit)} ${product.unit}</strong> @ ৳${cost.toFixed(2)} = <strong>Total: ৳${totalCost.toFixed(2)}</strong><br>New stock level: ${formatQty(newStockLevel, product.unit)} ${product.unit}`;
+        }
+
+        function confirmRestock() {
+            if (!hasPerm('edit_stock')) {
+                alert('You don\'t have permission to restock products');
+                return;
+            }
+            const product = DB.products.find(p => p.id === restockProductId);
+            if (!product) return;
+
+            const qty = parseFloat(document.getElementById('restockQtyInput').value);
+            const cost = parseFloat(document.getElementById('restockCostInput').value) || 0;
+            const supplier = document.getElementById('restockSupplierInput').value.trim();
+            const notes = document.getElementById('restockNotesInput').value.trim();
+
+            if (!qty || qty <= 0) {
+                alert('Enter a valid quantity received');
+                return;
+            }
+            if (cost < 0) {
+                alert('Cost price cannot be negative');
+                return;
+            }
+
+            const roundedQty = Math.round(qty * 1000) / 1000;
+            const totalCost = roundedQty * cost;
+            const oldStock = product.stock;
+
+            product.stock = Math.round((product.stock + roundedQty) * 1000) / 1000;
+            product.costPrice = cost; // update to most recent cost price
+
+            DB.purchases.push({
+                id: Date.now(),
+                date: new Date().toLocaleString(),
+                productId: product.id,
+                productName: product.name,
+                quantity: roundedQty,
+                unit: product.unit,
+                costPrice: cost,
+                totalCost,
+                supplier,
+                notes,
+                addedBy: DB.currentUser ? DB.currentUser.id : 'system'
+            });
+
+            closeRestockModal();
+            loadProducts();
+            loadProductsTable();
+            loadReports();
+            checkLowStock();
+            logAudit('restock', `"${product.name}": +${formatQty(roundedQty, product.unit)} ${product.unit} @ ৳${cost}/${product.unit} (total ৳${totalCost.toFixed(2)})${supplier ? ' from ' + supplier : ''} — stock ${oldStock} → ${product.stock}`);
+            saveDB();
+            alert(`✓ Restocked! Added ${formatQty(roundedQty, product.unit)} ${product.unit}. New stock: ${formatQty(product.stock, product.unit)} ${product.unit}`);
+        }
+
+        const TRASH_RETENTION_DAYS = 30;
+
+        function pruneTrash() {
+            const cutoff = Date.now() - (TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+            DB.trash = DB.trash.filter(t => t.deletedAt >= cutoff);
+        }
+
         function deleteProduct(idx) {
             if (!hasPerm('delete_product')) {
                 alert('Permission denied');
                 return;
             }
             const product = DB.products[idx];
-            if (confirm('Delete this product?')) {
+            if (confirm(`Delete "${product.name}"? It will be moved to Trash and can be restored within ${TRASH_RETENTION_DAYS} days from Admin > Trash Bin.`)) {
                 DB.products.splice(idx, 1);
+                DB.trash.push({
+                    id: Date.now() + Math.random(),
+                    type: 'product',
+                    deletedAt: Date.now(),
+                    deletedBy: DB.currentUser ? DB.currentUser.id : 'system',
+                    data: product
+                });
+                pruneTrash();
                 loadProducts();
                 loadProductsTable();
                 loadBarcodeList();
                 checkLowStock();
-                logAudit('product_deleted', `Deleted "${product.name}" (barcode ${product.barcode})`);
+                logAudit('product_deleted', `Deleted "${product.name}" (barcode ${product.barcode}) — moved to trash`);
                 saveDB();
             }
         }
@@ -2394,16 +2635,28 @@
             const product = DB.products.find(p => p.id === productId);
             if (!product) return;
 
-            document.getElementById('invoicePaper').innerHTML = `
-                <div style="text-align:center; padding: 10px 0;">
+            const copiesStr = prompt(`How many copies of this label?`, '1');
+            if (copiesStr === null) return;
+            const copies = Math.max(1, Math.min(50, parseInt(copiesStr) || 1));
+
+            const cells = Array.from({ length: copies }, (_, i) => `
+                <div class="label-sheet-cell">
                     <div style="font-size:14px; font-weight:700; margin-bottom:4px;">${product.icon} ${product.name}</div>
                     <div style="font-size:13px; margin-bottom:10px;">৳ ${product.price.toFixed(2)} / ${product.unit}</div>
-                    <svg id="barcodeSvg" style="max-width:100%;"></svg>
+                    <svg id="barcodeSvg_${i}" style="max-width:100%;"></svg>
                     <div style="font-family:'Courier New',monospace; font-size:12px; letter-spacing:2px; margin-top:4px;">${product.barcode}</div>
                 </div>
-            `;
-            renderBarcodeSVG(product.barcode, document.getElementById('barcodeSvg'));
+            `).join('');
+
+            document.getElementById('invoicePaper').innerHTML = copies > 1
+                ? `<div class="label-sheet-grid">${cells}</div>`
+                : `<div style="text-align:center; padding: 10px 0;">${cells}</div>`;
+
+            for (let i = 0; i < copies; i++) {
+                renderBarcodeSVG(product.barcode, document.getElementById(`barcodeSvg_${i}`));
+            }
             document.getElementById('invoiceModal').classList.add('active');
+            if (copies > 1) logAudit('label_printed', `Printed ${copies} copies of label for "${product.name}"`);
         }
 
         // ===== PACK & WEIGH LABELS (pre-packed weighed items) =====
@@ -3026,6 +3279,14 @@
             }
         });
 
+        function clearSalesFilters() {
+            document.getElementById('salesSearchInput').value = '';
+            document.getElementById('salesCashierFilter').value = '';
+            document.getElementById('salesFromDate').value = '';
+            document.getElementById('salesToDate').value = '';
+            loadReports();
+        }
+
         function loadReports() {
             const totalSales = DB.sales.reduce((sum, s) => sum + (s.amount - (s.refundedAmount || 0)), 0);
             document.getElementById('totalSales').textContent = '৳ ' + totalSales.toFixed(2);
@@ -3033,15 +3294,58 @@
             const totalStock = DB.products.reduce((sum, p) => sum + p.stock, 0);
             document.getElementById('totalStockItems').textContent = totalStock;
 
+            // Populate cashier filter dropdown with whoever has actually made a sale,
+            // preserving the currently selected value across re-renders
+            const cashierFilterEl = document.getElementById('salesCashierFilter');
+            const currentCashierSelection = cashierFilterEl.value;
+            const cashierNames = Array.from(new Set(DB.sales.map(s => s.cashier))).sort();
+            cashierFilterEl.innerHTML = '<option value="">All Cashiers</option>' +
+                cashierNames.map(c => `<option value="${c}">${c}</option>`).join('');
+            cashierFilterEl.value = currentCashierSelection;
+
+            const searchQuery = document.getElementById('salesSearchInput').value.trim().toLowerCase();
+            const cashierFilter = document.getElementById('salesCashierFilter').value;
+            const fromDateStr = document.getElementById('salesFromDate').value;
+            const toDateStr = document.getElementById('salesToDate').value;
+            const fromDate = fromDateStr ? new Date(fromDateStr + 'T00:00:00') : null;
+            const toDate = toDateStr ? new Date(toDateStr + 'T23:59:59') : null;
+
+            let filteredSales = DB.sales.slice();
+
+            if (searchQuery) {
+                filteredSales = filteredSales.filter(s =>
+                    (s.invoiceNo || '').toLowerCase().includes(searchQuery) ||
+                    s.items.some(i => i.name.toLowerCase().includes(searchQuery))
+                );
+            }
+            if (cashierFilter) {
+                filteredSales = filteredSales.filter(s => s.cashier === cashierFilter);
+            }
+            if (fromDate || toDate) {
+                filteredSales = filteredSales.filter(s => {
+                    const saleDate = new Date(s.id);
+                    if (fromDate && saleDate < fromDate) return false;
+                    if (toDate && saleDate > toDate) return false;
+                    return true;
+                });
+            }
+
+            const isFiltered = searchQuery || cashierFilter || fromDate || toDate;
+            const sortedSales = filteredSales.slice().reverse();
+            const salesToShow = isFiltered ? sortedSales : sortedSales.slice(0, 8);
+
             const salesTbody = document.getElementById('salesTableBody');
-            const recentSales = DB.sales.slice(-8).reverse();
-            salesTbody.innerHTML = recentSales.map(s => {
+            const countNote = isFiltered
+                ? `<tr><td colspan="5" style="text-align:center; color:#999; font-size:11px;">Showing ${salesToShow.length} matching sale(s)</td></tr>`
+                : (DB.sales.length > 8 ? `<tr><td colspan="5" style="text-align:center; color:#999; font-size:11px;">Showing last 8 of ${DB.sales.length} — use filters above to search older sales</td></tr>` : '');
+
+            salesTbody.innerHTML = countNote + salesToShow.map(s => {
                 const statusTag = s.status === 'refunded' ? ' <span style="color:#e74c3c; font-size:10px;">(REFUNDED)</span>'
                     : s.status === 'partial_refund' ? ' <span style="color:#BA7517; font-size:10px;">(PARTIAL)</span>' : '';
                 return `
                 <tr>
-                    <td style="font-size: 11px;">${s.date}${statusTag}</td>
-                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}</td>
+                    <td style="font-size: 11px;">${s.invoiceNo || ''}<br>${s.date}${statusTag}</td>
+                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}<br><span style="color:#999;">by ${s.cashier}</span></td>
                     <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
@@ -3050,7 +3354,7 @@
                         ${hasPerm('delete_sales') ? `<button class="btn-delete-product" onclick="deleteSale(${s.id})">Delete</button>` : ''}
                     </td>
                 </tr>
-            `}).join('') || '<tr><td colspan="5" style="text-align: center; color: #999;">No sales</td></tr>';
+            `}).join('') || (isFiltered ? '<tr><td colspan="5" style="text-align: center; color: #999;">No sales match your filters</td></tr>' : '<tr><td colspan="5" style="text-align: center; color: #999;">No sales</td></tr>');
 
             const stockTbody = document.getElementById('stockReportBody');
             stockTbody.innerHTML = DB.products.map(p => `
@@ -3062,6 +3366,70 @@
             `).join('');
 
             renderSalesChart();
+            loadMarginAndPurchaseHistory();
+        }
+
+        function loadMarginAndPurchaseHistory() {
+            const marginBox = document.getElementById('marginSummaryBox');
+            const purchaseTbody = document.getElementById('purchaseHistoryBody');
+            if (!marginBox || !purchaseTbody) return;
+
+            if (!hasPerm('admin')) {
+                marginBox.innerHTML = '<p style="color:#999; font-size:12px;">Profit margin and cost data is restricted to admin.</p>';
+                purchaseTbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#999;">Restricted to admin</td></tr>';
+                return;
+            }
+
+            // Estimate cost-of-goods-sold using each product's current cost price against
+            // net quantity actually sold (sales minus returned quantities)
+            let totalRevenue = 0;
+            let totalCOGS = 0;
+            DB.sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    const netQty = item.quantity - (item.returnedQty || 0);
+                    if (netQty <= 0) return;
+                    const product = DB.products.find(p => p.id === item.id);
+                    const cost = product ? (product.costPrice || 0) : 0;
+                    totalRevenue += netQty * item.price;
+                    totalCOGS += netQty * cost;
+                });
+                totalRevenue -= 0; // refundedAmount already excluded via netQty above
+            });
+            const grossProfit = totalRevenue - totalCOGS;
+            const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue * 100) : 0;
+
+            const totalPurchaseCost = DB.purchases.reduce((sum, p) => sum + p.totalCost, 0);
+
+            marginBox.innerHTML = `
+                <div class="invoice-totals" style="font-family:inherit;">
+                    <div class="row"><span>Revenue (net of returns)</span><span>৳ ${totalRevenue.toFixed(2)}</span></div>
+                    <div class="row"><span>Est. Cost of Goods Sold</span><span>৳ ${totalCOGS.toFixed(2)}</span></div>
+                    <div class="row grand"><span>Gross Profit</span><span>৳ ${grossProfit.toFixed(2)} (${marginPct.toFixed(1)}%)</span></div>
+                </div>
+                <p style="font-size:11px; color:#999; margin-top:8px;">Estimated using each product's current cost price — past sales don't store a historical cost snapshot, so this reflects today's cost prices applied retroactively, not necessarily the exact cost paid at the time of each sale. Total spent on restocking: ৳${totalPurchaseCost.toFixed(2)}.</p>
+            `;
+
+            const recentPurchases = DB.purchases.slice(-30).reverse();
+            purchaseTbody.innerHTML = recentPurchases.map(p => `
+                <tr>
+                    <td style="font-size:11px;">${p.date}</td>
+                    <td>${p.productName}</td>
+                    <td>${formatQty(p.quantity, p.unit)} ${p.unit}</td>
+                    <td>৳${p.costPrice.toFixed(2)}</td>
+                    <td>৳${p.totalCost.toFixed(2)}</td>
+                    <td style="font-size:11px;">${p.supplier || '—'}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No restock history yet</td></tr>';
+        }
+
+        function exportPurchasesCSV() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const rows = [['Date', 'Product', 'Quantity', 'Unit', 'Cost Price', 'Total Cost', 'Supplier', 'Notes', 'Added By']];
+            DB.purchases.forEach(p => {
+                rows.push([p.date, p.productName, p.quantity, p.unit, p.costPrice.toFixed(2), p.totalCost.toFixed(2), p.supplier || '', p.notes || '', p.addedBy]);
+            });
+            downloadCSV(`purchase_history_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            logAudit('export', 'Exported purchase history CSV');
         }
 
         function reprintInvoice(saleId) {
@@ -3075,11 +3443,19 @@
                 alert('Permission denied');
                 return;
             }
-            if (!confirm('Delete this sales record? This cannot be undone.')) return;
             const sale = DB.sales.find(s => s.id === saleId);
+            if (!confirm(`Delete sale ${sale ? sale.invoiceNo : ''}? It will be moved to Trash and can be restored within ${TRASH_RETENTION_DAYS} days from Admin > Trash Bin.`)) return;
             DB.sales = DB.sales.filter(s => s.id !== saleId);
+            DB.trash.push({
+                id: Date.now() + Math.random(),
+                type: 'sale',
+                deletedAt: Date.now(),
+                deletedBy: DB.currentUser ? DB.currentUser.id : 'system',
+                data: sale
+            });
+            pruneTrash();
             loadReports();
-            logAudit('sale_deleted', `Deleted sale ${sale ? sale.invoiceNo : saleId}`);
+            logAudit('sale_deleted', `Deleted sale ${sale ? sale.invoiceNo : saleId} — moved to trash`);
             saveDB();
         }
 
@@ -3262,6 +3638,73 @@
                     <div style="color:#666;">${a.details || ''}</div>
                 </div>
             `).join('') || '<p style="color:#999;">No activity yet.</p>';
+        }
+
+        // ===== TRASH BIN (soft-delete recovery) =====
+        function loadTrashBin() {
+            const body = document.getElementById('trashBinBody');
+            if (!body) return;
+            pruneTrash();
+
+            const items = DB.trash.slice().reverse();
+            body.innerHTML = items.map(t => {
+                const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - Math.floor((Date.now() - t.deletedAt) / (24*60*60*1000)));
+                const label = t.type === 'product'
+                    ? `${t.data.icon || ''} ${t.data.name} (barcode ${t.data.barcode})`
+                    : `Sale ${t.data.invoiceNo || ''} — ৳${(t.data.amount || 0).toFixed(2)}`;
+                return `
+                    <div class="user-card-row">
+                        <div>
+                            <div class="uname">${t.type === 'product' ? '📦' : '🧾'} ${label}</div>
+                            <div class="urole">Deleted by ${t.deletedBy} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
+                        </div>
+                        <div>
+                            <button class="btn-small edit" onclick="restoreFromTrash('${t.id}')"><i class="fas fa-undo"></i> Restore</button>
+                            <button class="btn-small del" onclick="permanentlyDeleteFromTrash('${t.id}')"><i class="fas fa-trash"></i> Delete Forever</button>
+                        </div>
+                    </div>
+                `;
+            }).join('') || '<p style="color:#999; font-size:12px;">Trash is empty.</p>';
+        }
+
+        function restoreFromTrash(trashId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const entry = DB.trash.find(t => String(t.id) === String(trashId));
+            if (!entry) return;
+
+            if (entry.type === 'product') {
+                const barcodeTaken = DB.products.find(p => p.barcode === entry.data.barcode);
+                if (barcodeTaken) {
+                    alert(`Cannot restore — barcode "${entry.data.barcode}" is already used by another product. Change that product's barcode first, or edit this item's barcode before restoring.`);
+                    return;
+                }
+                DB.products.push(entry.data);
+                loadProducts();
+                loadProductsTable();
+                loadBarcodeList();
+                checkLowStock();
+            } else if (entry.type === 'sale') {
+                DB.sales.push(entry.data);
+                loadReports();
+            }
+
+            DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
+            loadTrashBin();
+            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
+            saveDB();
+            alert('✓ Restored successfully');
+        }
+
+        function permanentlyDeleteFromTrash(trashId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const entry = DB.trash.find(t => String(t.id) === String(trashId));
+            if (!entry) return;
+            if (!confirm('Permanently delete this item? This truly cannot be undone.')) return;
+
+            DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
+            loadTrashBin();
+            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
+            saveDB();
         }
 
         // ===== SALES CHART (vanilla canvas, no external deps) =====
