@@ -1020,7 +1020,7 @@
                                     </select>
                                 </div>
                                 <div class="payment-input">
-                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01">
+                                    <input type="number" id="cashAmount" placeholder="Amount received" step="0.01" onkeypress="if(event.key==='Enter'){event.preventDefault(); calculateChange();}">
                                     <button class="btn-action btn-checkout" onclick="calculateChange()">Calc</button>
                                 </div>
                                 <div class="change-display" id="changeDisplay" style="display:none;"></div>
@@ -1565,6 +1565,7 @@
             delete_sales: 'Delete Sales Records',
             process_refund: 'Process Returns/Refunds',
             pack_weigh: 'Pack & Weigh Items',
+            restock_purchase: 'Restock / Record Purchases',
             view_reports: 'View Reports',
             admin: 'Full Admin Access'
         };
@@ -1581,7 +1582,7 @@
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
-                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','view_reports','admin'] },
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','admin'] },
                 { id: 'scanner', name: 'Scanner Operator', password: '1234', role: 'scanner',
                   permissions: ['view_reports'] },
                 { id: 'cashier', name: 'Cashier', password: '1234', role: 'cashier',
@@ -2112,7 +2113,7 @@
                     <td>
                         ${formatQty(p.stock, p.unit)} ${p.unit}
                         ${hasPerm('edit_stock') ? `<button class="btn-edit" style="margin-left:6px;" onclick="editStock(${p.id})" title="Quick correction"><i class="fas fa-boxes"></i></button>` : ''}
-                        ${hasPerm('edit_stock') ? `<button class="btn-edit" style="background:#27ae60;" onclick="openRestockModal(${p.id})" title="Record a purchase/restock"><i class="fas fa-truck-loading"></i> Restock</button>` : ''}
+                        ${hasPerm('restock_purchase') ? `<button class="btn-edit" style="background:#27ae60;" onclick="openRestockModal(${p.id})" title="Record a purchase/restock"><i class="fas fa-truck-loading"></i> Restock</button>` : ''}
                     </td>
                     <td>
                         ${hasPerm('edit_price') ? `<button class="btn-edit" onclick="editProduct(${p.id})"><i class="fas fa-edit"></i> Price</button>` : ''}
@@ -2501,7 +2502,7 @@
         let restockProductId = null;
 
         function openRestockModal(productId) {
-            if (!hasPerm('edit_stock')) {
+            if (!hasPerm('restock_purchase')) {
                 alert('You don\'t have permission to restock products');
                 return;
             }
@@ -2546,7 +2547,7 @@
         }
 
         function confirmRestock() {
-            if (!hasPerm('edit_stock')) {
+            if (!hasPerm('restock_purchase')) {
                 alert('You don\'t have permission to restock products');
                 return;
             }
