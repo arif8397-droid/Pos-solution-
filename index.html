@@ -1329,27 +1329,55 @@
 
     <!-- EDIT PRODUCT MODAL -->
     <div id="editModal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-content" style="max-width: 540px;">
             <div class="modal-header">
                 <h2>Edit Product</h2>
                 <button class="close-modal" onclick="closeEditModal()">✕</button>
             </div>
-            <div class="form-field" style="margin-bottom: 16px;">
-                <label>Product Name</label>
-                <input type="text" id="editName" disabled style="background: #f5f5f5;">
+            <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
+                <div class="form-field">
+                    <label>Product Name</label>
+                    <input type="text" id="editName">
+                </div>
+                <div class="form-field">
+                    <label>Barcode</label>
+                    <input type="text" id="editBarcode">
+                </div>
+                <div class="form-field">
+                    <label>Unit</label>
+                    <select id="editUnit" onchange="onEditUnitChange()">
+                        <option value="pcs">Piece (pcs)</option>
+                        <option value="kg">Kilogram (kg)</option>
+                        <option value="g">Gram (g)</option>
+                        <option value="l">Litre (l)</option>
+                        <option value="ml">Millilitre (ml)</option>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label>Sold As</label>
+                    <select id="editSellMode">
+                        <option value="loose">Pack on demand — weighed/counted at counter</option>
+                        <option value="prepacked">Fixed unit — sold as a single sealed piece</option>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label id="editPriceLabel">Price (৳)</label>
+                    <input type="number" id="editPrice" step="0.01">
+                </div>
+                <div class="form-field" id="editStockField">
+                    <label id="editStockLabel">Stock</label>
+                    <input type="number" id="editStock" step="0.01">
+                </div>
+                <div class="form-field">
+                    <label>Icon</label>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="text" id="editIcon" maxlength="2" style="width: 50px; text-align:center; font-size:18px;" readonly onclick="toggleEditEmojiPicker()">
+                        <button type="button" class="btn-edit" onclick="toggleEditEmojiPicker()" title="Choose emoji"><i class="fas fa-icons"></i></button>
+                    </div>
+                </div>
             </div>
-            <div class="form-field" style="margin-bottom: 16px;">
-                <label id="editPriceLabel">New Price (৳)</label>
-                <input type="number" id="editPrice" step="0.01">
-            </div>
-            <div class="form-field" id="editSellModeField" style="margin-bottom: 16px; display:none;">
-                <label>Sold As</label>
-                <select id="editSellMode">
-                    <option value="loose">Pack on demand — weighed/counted per customer at counter</option>
-                    <option value="prepacked">Fixed unit — sold as a single sealed piece, no packing step</option>
-                </select>
-            </div>
-            <div style="display: flex; gap: 8px;">
+            <div id="editEmojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
+            <div style="display: flex; gap: 8px; margin-top: 14px;">
                 <button class="btn-action btn-checkout" style="flex: 1;" onclick="savePrice()">Save Changes</button>
                 <button class="btn-action btn-secondary" style="flex: 1;" onclick="closeEditModal()">Cancel</button>
             </div>
@@ -2195,45 +2223,126 @@
 
         function editProduct(productId) {
             if (!hasPerm('edit_price')) {
-                alert('You don\'t have permission to update prices');
+                alert('You don\'t have permission to edit products');
                 return;
             }
 
             const product = DB.products.find(p => p.id === productId);
+            if (!product) return;
             editingProductId = productId;
+
             document.getElementById('editName').value = product.name;
-            document.getElementById('editPrice').value = product.price;
-            document.getElementById('editPriceLabel').textContent = `New Price (৳ / ${product.unit || 'pcs'})`;
-
-            document.getElementById('editSellModeField').style.display = 'block';
+            document.getElementById('editBarcode').value = product.barcode;
+            document.getElementById('editUnit').value = product.unit || 'pcs';
             document.getElementById('editSellMode').value = product.sellMode || 'loose';
+            document.getElementById('editPrice').value = product.price;
+            document.getElementById('editIcon').value = product.icon || '📦';
 
+            const canEditStock = hasPerm('edit_stock');
+            document.getElementById('editStockField').style.display = canEditStock ? 'block' : 'none';
+            if (canEditStock) {
+                document.getElementById('editStock').value = product.stock;
+            }
+
+            onEditUnitChange();
+            document.getElementById('editEmojiPickerPanel').classList.add('hidden-banner');
             document.getElementById('editModal').classList.add('active');
             document.getElementById('editPrice').focus();
         }
 
+        function onEditUnitChange() {
+            const unit = document.getElementById('editUnit').value;
+            document.getElementById('editPriceLabel').textContent = `Price (৳ / ${unit})`;
+            document.getElementById('editStockLabel').textContent = `Stock (${unit})`;
+            document.getElementById('editStock').step = isWeightUnit(unit) ? '0.01' : '1';
+        }
+
+        function toggleEditEmojiPicker() {
+            const panel = document.getElementById('editEmojiPickerPanel');
+            const isHidden = panel.classList.contains('hidden-banner');
+            if (isHidden) {
+                panel.innerHTML = EMOJI_PICKER_SET.map(e =>
+                    `<div class="emoji-option" onclick="selectEditEmoji('${e}')">${e}</div>`
+                ).join('');
+                panel.classList.remove('hidden-banner');
+            } else {
+                panel.classList.add('hidden-banner');
+            }
+        }
+
+        function selectEditEmoji(emoji) {
+            document.getElementById('editIcon').value = emoji;
+            document.getElementById('editEmojiPickerPanel').classList.add('hidden-banner');
+        }
+
         function savePrice() {
+            const product = DB.products.find(p => p.id === editingProductId);
+            if (!product) return;
+
+            const newName = document.getElementById('editName').value.trim();
+            const newBarcode = document.getElementById('editBarcode').value.trim();
+            const newUnit = document.getElementById('editUnit').value;
+            const newSellMode = document.getElementById('editSellMode').value;
             const newPrice = parseFloat(document.getElementById('editPrice').value);
-            if (!newPrice || newPrice < 0) {
-                alert('Enter valid price');
+            const newIcon = document.getElementById('editIcon').value || '📦';
+
+            if (!newName) {
+                alert('Product name cannot be empty');
                 return;
             }
+            if (!newBarcode) {
+                alert('Barcode cannot be empty');
+                return;
+            }
+            const duplicate = DB.products.find(p => p.barcode === newBarcode && p.id !== product.id);
+            if (duplicate) {
+                alert(`Barcode already used by "${duplicate.name}"`);
+                return;
+            }
+            if (!newPrice || newPrice < 0) {
+                alert('Enter a valid price');
+                return;
+            }
+            if (product.unit !== newUnit) {
+                const confirmed = confirm(
+                    `Changing unit from "${product.unit}" to "${newUnit}" will NOT convert the stock number — ` +
+                    `it stays at ${formatQty(product.stock, product.unit)}, now meaning ${newUnit} instead of ${product.unit}. ` +
+                    `Update the stock value yourself afterward if needed. Continue?`
+                );
+                if (!confirmed) return;
+            }
 
-            const product = DB.products.find(p => p.id === editingProductId);
-            const oldPrice = product.price;
-            const oldSellMode = product.sellMode;
-            const newSellMode = document.getElementById('editSellMode').value;
+            const changes = [];
+            if (product.name !== newName) changes.push(`name "${product.name}" → "${newName}"`);
+            if (product.barcode !== newBarcode) changes.push(`barcode "${product.barcode}" → "${newBarcode}"`);
+            if (product.unit !== newUnit) changes.push(`unit "${product.unit}" → "${newUnit}"`);
+            if (product.sellMode !== newSellMode) changes.push(`sell mode "${product.sellMode}" → "${newSellMode}"`);
+            if (product.price !== newPrice) changes.push(`price ৳${product.price} → ৳${newPrice}`);
 
-            product.price = newPrice;
+            product.name = newName;
+            product.barcode = newBarcode;
+            product.unit = newUnit;
             product.sellMode = newSellMode;
+            product.price = newPrice;
+            product.icon = newIcon;
+
+            if (hasPerm('edit_stock')) {
+                const newStock = parseFloat(document.getElementById('editStock').value);
+                if (!isNaN(newStock) && newStock >= 0) {
+                    const rounded = Math.round(newStock * 1000) / 1000;
+                    if (product.stock !== rounded) changes.push(`stock ${product.stock} → ${rounded} ${newUnit}`);
+                    product.stock = rounded;
+                }
+            }
 
             closeEditModal();
             loadProducts();
             loadProductsTable();
+            loadBarcodeList();
+            loadReports();
+            checkLowStock();
 
-            const changes = [`price ৳${oldPrice} → ৳${newPrice}`];
-            if (oldSellMode !== newSellMode) changes.push(`sell mode "${oldSellMode}" → "${newSellMode}"`);
-            logAudit('product_updated', `"${product.name}": ${changes.join(', ')}`);
+            logAudit('product_updated', `"${product.name}": ${changes.length ? changes.join(', ') : 'no changes'}`);
             saveDB();
             alert('✓ Product updated!');
         }
