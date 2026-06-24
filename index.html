@@ -913,6 +913,38 @@
                 </div>
                 <button type="submit" class="btn-login">Login</button>
             </form>
+            <div style="text-align:center; margin-top:12px;">
+                <a href="#" onclick="openRecoveryModal(); return false;" style="font-size:12px; color:#185FA5; text-decoration:none;">Forgot password?</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- PASSWORD RECOVERY MODAL -->
+    <div id="recoveryModal" class="modal">
+        <div class="modal-content" style="max-width: 440px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-key"></i> Account Recovery</h2>
+                <button class="close-modal" onclick="closeRecoveryModal()">✕</button>
+            </div>
+            <div id="recoveryStep1">
+                <p style="font-size:12px; color:#666; margin-bottom:12px;">
+                    This resets a user's password without needing their old one. It does not touch your products, sales, or any other data.
+                </p>
+                <div class="form-field" style="margin-bottom: 12px;">
+                    <label>Recovery Passphrase</label>
+                    <input type="password" id="recoveryPassphrase" placeholder="Set during initial setup">
+                </div>
+                <div class="form-field" style="margin-bottom: 12px;">
+                    <label>User ID to Reset</label>
+                    <input type="text" id="recoveryUserId" placeholder="e.g. admin" value="admin">
+                </div>
+                <div class="form-field" style="margin-bottom: 12px;">
+                    <label>New Password</label>
+                    <input type="text" id="recoveryNewPassword" placeholder="New password">
+                </div>
+                <div id="recoveryError" style="color:#e74c3c; font-size:12px; margin-bottom:8px; display:none;"></div>
+                <button class="btn-action btn-checkout" style="width:100%;" onclick="performRecovery()">Reset Password</button>
+            </div>
         </div>
     </div>
 
@@ -1333,7 +1365,14 @@
                                 <label>Auto-logout after idle minutes (0 = disabled):</label>
                                 <input type="number" id="sessionTimeoutMinutes" value="5" min="0" onchange="updateSessionTimeout()">
                             </div>
-                            <p style="font-size: 12px; color: #999;">Anyone left logged in on an unattended till is automatically signed out after this many minutes of no clicks, key presses, or touches.</p>
+                            <p style="font-size: 12px; color: #999; margin-bottom: 14px;">Anyone left logged in on an unattended till is automatically signed out after this many minutes of no clicks, key presses, or touches.</p>
+
+                            <div style="border-top: 1px solid #eee; padding-top: 12px;">
+                                <label style="display:block; margin-bottom:6px; font-weight:600; font-size:13px;">Account Recovery Passphrase</label>
+                                <p id="recoveryPassphraseStatus" style="font-size: 12px; color: #999; margin-bottom: 8px;"></p>
+                                <button type="button" class="btn-edit" onclick="setRecoveryPassphrase()"><i class="fas fa-key"></i> Set / Change Recovery Passphrase</button>
+                                <p style="font-size: 11px; color: #999; margin-top: 8px;">This lets anyone who knows the passphrase reset a forgotten password from the login screen, without needing data to be wiped. Set this now, while you still have access — write it down somewhere safe.</p>
+                            </div>
                         </div>
 
                         <!-- Login Page Customization -->
@@ -1635,6 +1674,7 @@
             settings: {
                 lowStockThreshold: 10,
                 sessionTimeoutMinutes: 5,
+                recoveryPassphraseHash: '',
                 brandTitle: 'POS System',
                 brandSubtitle: 'Enterprise Grocery Management',
                 brandIcon: 'fas fa-store',
@@ -2012,6 +2052,9 @@
         function refreshAdminSettingsUI() {
             document.getElementById('lowStockThreshold').value = DB.settings.lowStockThreshold;
             document.getElementById('sessionTimeoutMinutes').value = DB.settings.sessionTimeoutMinutes != null ? DB.settings.sessionTimeoutMinutes : 5;
+            document.getElementById('recoveryPassphraseStatus').textContent = DB.settings.recoveryPassphraseHash
+                ? '✓ A recovery passphrase is set for this installation.'
+                : '⚠ No recovery passphrase set yet — if everyone forgets their password, there is no way back in except restoring from a backup.';
             document.getElementById('brandTitle').value = DB.settings.brandTitle;
             document.getElementById('brandSubtitle').value = DB.settings.brandSubtitle;
             document.getElementById('brandIcon').value = DB.settings.brandIcon;
@@ -2122,6 +2165,77 @@
             logAudit('password_changed', `Password changed for "${userId}"`);
             saveDB();
             alert(`✓ Password updated for ${user.id}`);
+        }
+
+        // ===== ACCOUNT RECOVERY =====
+        function setRecoveryPassphrase() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const current = DB.settings.recoveryPassphraseHash;
+            const promptText = current
+                ? 'A recovery passphrase is already set. Enter a new one to replace it:'
+                : 'Set a recovery passphrase. Keep this safe — anyone who knows it can reset any user\'s password from the login screen.';
+            const newPhrase = prompt(promptText);
+            if (newPhrase === null) return;
+            if (!newPhrase.trim() || newPhrase.trim().length < 6) {
+                alert('Recovery passphrase must be at least 6 characters.');
+                return;
+            }
+            DB.settings.recoveryPassphraseHash = hashPassword(newPhrase.trim());
+            logAudit('recovery_passphrase_set', 'Account recovery passphrase was set/changed');
+            saveDB();
+            refreshAdminSettingsUI();
+            alert('✓ Recovery passphrase saved. Store it somewhere safe — it is the only way to reset a password if everyone is locked out.');
+        }
+
+        function openRecoveryModal() {
+            document.getElementById('recoveryPassphrase').value = '';
+            document.getElementById('recoveryUserId').value = 'admin';
+            document.getElementById('recoveryNewPassword').value = '';
+            document.getElementById('recoveryError').style.display = 'none';
+            document.getElementById('recoveryModal').classList.add('active');
+        }
+
+        function closeRecoveryModal() {
+            document.getElementById('recoveryModal').classList.remove('active');
+        }
+
+        function performRecovery() {
+            const errorBox = document.getElementById('recoveryError');
+            errorBox.style.display = 'none';
+
+            if (!DB.settings.recoveryPassphraseHash) {
+                errorBox.textContent = 'No recovery passphrase has been set up for this installation. Ask whoever set up this POS to set one from Admin > Session Security, or restore from a known backup.';
+                errorBox.style.display = 'block';
+                return;
+            }
+
+            const enteredPhrase = document.getElementById('recoveryPassphrase').value;
+            if (!verifyPassword(enteredPhrase, DB.settings.recoveryPassphraseHash)) {
+                errorBox.textContent = 'Incorrect recovery passphrase.';
+                errorBox.style.display = 'block';
+                return;
+            }
+
+            const userId = document.getElementById('recoveryUserId').value.trim();
+            const newPassword = document.getElementById('recoveryNewPassword').value;
+            const user = DB.users.find(u => u.id === userId);
+
+            if (!user) {
+                errorBox.textContent = `No user found with ID "${userId}".`;
+                errorBox.style.display = 'block';
+                return;
+            }
+            if (!newPassword || newPassword.length < 1) {
+                errorBox.textContent = 'Enter a new password.';
+                errorBox.style.display = 'block';
+                return;
+            }
+
+            user.password = hashPassword(newPassword);
+            logAudit('password_recovered', `Password for "${userId}" was reset via account recovery (no admin session)`);
+            saveDB();
+            closeRecoveryModal();
+            alert(`✓ Password for "${userId}" has been reset. You can log in now with the new password.`);
         }
 
         function countAdmins(excludingUserId) {
