@@ -1159,6 +1159,11 @@
 
                     <div class="admin-card" style="margin-bottom: 20px;">
                         <h4><i class="fas fa-cash-register"></i> Shift / Daily Closing Summary</h4>
+                        <div style="margin-bottom:10px;">
+                            <button type="button" class="btn-edit" onclick="setShiftDateRange('today')">Today</button>
+                            <button type="button" class="btn-edit" onclick="setShiftDateRange('yesterday')">Yesterday</button>
+                            <button type="button" class="btn-edit" onclick="setShiftDateRange('week')">This Week</button>
+                        </div>
                         <div class="form-grid" style="grid-template-columns: 1fr 1fr auto; align-items:end;">
                             <div class="form-field">
                                 <label>From Date</label>
@@ -1176,6 +1181,24 @@
                     <div class="admin-card" style="margin-bottom: 20px;">
                         <h4><i class="fas fa-chart-pie"></i> Profit Margin & Purchase History</h4>
                         <div id="marginSummaryBox" style="margin-bottom:14px;"></div>
+
+                        <h5 style="color:#185FA5; font-size:13px; margin-bottom:8px;">By Product <span style="color:#999; font-weight:400;">(sorted by profit)</span></h5>
+                        <div style="max-height: 240px; overflow-y: auto; margin-bottom:16px;">
+                            <table class="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th>Qty Sold</th>
+                                        <th>Revenue</th>
+                                        <th>Est. Cost</th>
+                                        <th>Profit</th>
+                                        <th>Margin %</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="productMarginBody"></tbody>
+                            </table>
+                        </div>
+
                         <button class="btn-edit" onclick="exportPurchasesCSV()"><i class="fas fa-file-csv"></i> Export Purchase History CSV</button>
                         <div style="max-height: 240px; overflow-y: auto; margin-top:10px;">
                             <table class="products-table">
@@ -1301,6 +1324,16 @@
                                 <input type="number" id="lowStockThreshold" value="10" min="0" onchange="updateLowStockThreshold()">
                             </div>
                             <p style="font-size: 12px; color: #999;">A banner will appear for all users when any product reaches this stock level.</p>
+                        </div>
+
+                        <!-- Session Security -->
+                        <div class="admin-card">
+                            <h4><i class="fas fa-user-clock"></i> Session Security</h4>
+                            <div class="form-field" style="margin-bottom: 10px;">
+                                <label>Auto-logout after idle minutes (0 = disabled):</label>
+                                <input type="number" id="sessionTimeoutMinutes" value="5" min="0" onchange="updateSessionTimeout()">
+                            </div>
+                            <p style="font-size: 12px; color: #999;">Anyone left logged in on an unattended till is automatically signed out after this many minutes of no clicks, key presses, or touches.</p>
                         </div>
 
                         <!-- Login Page Customization -->
@@ -1587,11 +1620,11 @@
                 { id: 7, name: 'Egg', barcode: '8901001004001', unit: 'pcs', sellMode: 'loose', price: 12, costPrice: 8.5, stock: 300, icon: '🥚' },
             ],
             users: [
-                { id: 'admin', name: 'Administrator', password: '1234', role: 'admin',
+                { id: 'admin', name: 'Administrator', password: hashPassword('1234'), role: 'admin',
                   permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','admin'] },
-                { id: 'scanner', name: 'Scanner Operator', password: '1234', role: 'scanner',
+                { id: 'scanner', name: 'Scanner Operator', password: hashPassword('1234'), role: 'scanner',
                   permissions: ['view_reports'] },
-                { id: 'cashier', name: 'Cashier', password: '1234', role: 'cashier',
+                { id: 'cashier', name: 'Cashier', password: hashPassword('1234'), role: 'cashier',
                   permissions: ['pos'] }
             ],
             sales: [],
@@ -1601,6 +1634,7 @@
             auditLog: [],
             settings: {
                 lowStockThreshold: 10,
+                sessionTimeoutMinutes: 5,
                 brandTitle: 'POS System',
                 brandSubtitle: 'Enterprise Grocery Management',
                 brandIcon: 'fas fa-store',
@@ -1618,6 +1652,38 @@
 
         const STORAGE_KEY = 'pos_system_db_v1';
 
+        // ===== PASSWORD HANDLING =====
+        // Note: this is a client-side-only app with no backend/secret key, so true
+        // encryption isn't possible here. This hash is a deterrent against a password
+        // being trivially readable at a glance in localStorage/dev tools — it is NOT
+        // cryptographically secure against a determined attacker with access to the
+        // browser's storage. Real security for sensitive deployments needs a backend.
+        const PASSWORD_HASH_PREFIX = 'h1:';
+
+        function hashPassword(plain) {
+            let hash = 0;
+            const str = String(plain);
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+            }
+            // Mix in length and a salt-like constant so short/common passwords don't
+            // collide as easily as a bare checksum would
+            const mixed = (hash ^ (str.length * 2654435761)) >>> 0;
+            return PASSWORD_HASH_PREFIX + mixed.toString(36);
+        }
+
+        function isHashedPassword(value) {
+            return typeof value === 'string' && value.startsWith(PASSWORD_HASH_PREFIX);
+        }
+
+        function verifyPassword(plain, stored) {
+            if (isHashedPassword(stored)) {
+                return hashPassword(plain) === stored;
+            }
+            // Legacy plain-text password from before hashing existed — compare directly
+            return plain === stored;
+        }
+
         function loadDB() {
             try {
                 const raw = localStorage.getItem(STORAGE_KEY);
@@ -1630,12 +1696,17 @@
                     // Any saved user who already holds the "admin" permission should always
                     // have every permission that currently exists — otherwise an admin account
                     // saved before a new permission was introduced would be missing it forever.
+                    // Also transparently migrate any legacy plain-text password to hashed form.
                     const allPermKeys = Object.keys(ALL_PERMISSIONS);
                     const users = (saved.users || DEFAULT_DB.users).map(u => {
-                        if (u.permissions && u.permissions.includes('admin')) {
-                            return Object.assign({}, u, { permissions: allPermKeys.slice() });
+                        let next = u;
+                        if (next.permissions && next.permissions.includes('admin')) {
+                            next = Object.assign({}, next, { permissions: allPermKeys.slice() });
                         }
-                        return u;
+                        if (next.password && !isHashedPassword(next.password)) {
+                            next = Object.assign({}, next, { password: hashPassword(next.password) });
+                        }
+                        return next;
                     });
 
                     // Merge saved data over defaults so new fields added in updates still exist
@@ -1703,6 +1774,7 @@
         }
 
         const DB = loadDB();
+        saveDB(); // persist any password-hash migration immediately so it doesn't revert
 
         let cart = [];
         let editingProductId = null;
@@ -1716,7 +1788,7 @@
             event.preventDefault();
             const userId = document.getElementById('loginId').value;
             const password = document.getElementById('loginPass').value;
-            const user = DB.users.find(u => u.id === userId && u.password === password);
+            const user = DB.users.find(u => u.id === userId && verifyPassword(password, u.password));
 
             if (user) {
                 DB.currentUser = user;
@@ -1767,6 +1839,7 @@
             checkLowStock();
             updateClock();
             setInterval(updateClock, 1000);
+            startSessionTimeoutTracking();
 
             // Default to a section the user can access
             if (hasPerm('pos')) {
@@ -1777,6 +1850,40 @@
 
             const barcodeEl = document.getElementById('barcodeInput');
             if (barcodeEl && hasPerm('pos')) barcodeEl.focus();
+        }
+
+        // ===== SESSION TIMEOUT (auto-logout on inactivity) =====
+        let lastActivityTime = Date.now();
+        let sessionTimeoutInterval = null;
+
+        function recordActivity() {
+            lastActivityTime = Date.now();
+        }
+
+        function startSessionTimeoutTracking() {
+            lastActivityTime = Date.now();
+            ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
+                document.addEventListener(evt, recordActivity, { passive: true });
+            });
+
+            if (sessionTimeoutInterval) clearInterval(sessionTimeoutInterval);
+            sessionTimeoutInterval = setInterval(() => {
+                if (!DB.currentUser) return;
+                const timeoutMs = (DB.settings.sessionTimeoutMinutes || 5) * 60 * 1000;
+                if (timeoutMs <= 0) return; // 0 or negative disables timeout entirely
+                if (Date.now() - lastActivityTime >= timeoutMs) {
+                    logAudit('session_timeout', `Auto-logged out "${DB.currentUser.id}" after ${DB.settings.sessionTimeoutMinutes} min idle`);
+                    logout();
+                    alert('You were logged out due to inactivity.');
+                }
+            }, 10000);
+        }
+
+        function stopSessionTimeoutTracking() {
+            if (sessionTimeoutInterval) {
+                clearInterval(sessionTimeoutInterval);
+                sessionTimeoutInterval = null;
+            }
         }
 
         function updateClock() {
@@ -1826,6 +1933,7 @@
         function logout() {
             DB.currentUser = null;
             cart = [];
+            stopSessionTimeoutTracking();
             document.getElementById('appScreen').classList.add('hidden');
             document.getElementById('loginScreen').classList.remove('hidden');
             document.getElementById('loginId').value = '';
@@ -1852,6 +1960,13 @@
             const val = parseInt(document.getElementById('lowStockThreshold').value);
             DB.settings.lowStockThreshold = isNaN(val) ? 10 : val;
             checkLowStock();
+            saveDB();
+        }
+
+        function updateSessionTimeout() {
+            const val = parseInt(document.getElementById('sessionTimeoutMinutes').value);
+            DB.settings.sessionTimeoutMinutes = isNaN(val) || val < 0 ? 5 : val;
+            logAudit('settings_changed', `Session timeout set to ${DB.settings.sessionTimeoutMinutes} minute(s)`);
             saveDB();
         }
 
@@ -1896,6 +2011,7 @@
 
         function refreshAdminSettingsUI() {
             document.getElementById('lowStockThreshold').value = DB.settings.lowStockThreshold;
+            document.getElementById('sessionTimeoutMinutes').value = DB.settings.sessionTimeoutMinutes != null ? DB.settings.sessionTimeoutMinutes : 5;
             document.getElementById('brandTitle').value = DB.settings.brandTitle;
             document.getElementById('brandSubtitle').value = DB.settings.brandSubtitle;
             document.getElementById('brandIcon').value = DB.settings.brandIcon;
@@ -1961,7 +2077,7 @@
                 return;
             }
 
-            DB.users.push({ id, password, name, role, permissions: ['pos'] });
+            DB.users.push({ id, password: hashPassword(password), name, role, permissions: ['pos'] });
 
             document.getElementById('newUserId').value = '';
             document.getElementById('newUserPass').value = '';
@@ -2002,7 +2118,7 @@
             const newPass = prompt(`Set new password for "${user.name || user.id}":`);
             if (newPass === null) return;
             if (!newPass.trim()) { alert('Password cannot be empty'); return; }
-            user.password = newPass.trim();
+            user.password = hashPassword(newPass.trim());
             logAudit('password_changed', `Password changed for "${userId}"`);
             saveDB();
             alert(`✓ Password updated for ${user.id}`);
@@ -3429,28 +3545,50 @@
         function loadMarginAndPurchaseHistory() {
             const marginBox = document.getElementById('marginSummaryBox');
             const purchaseTbody = document.getElementById('purchaseHistoryBody');
+            const productMarginTbody = document.getElementById('productMarginBody');
             if (!marginBox || !purchaseTbody) return;
 
             if (!hasPerm('admin')) {
                 marginBox.innerHTML = '<p style="color:#999; font-size:12px;">Profit margin and cost data is restricted to admin.</p>';
                 purchaseTbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#999;">Restricted to admin</td></tr>';
+                if (productMarginTbody) productMarginTbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#999;">Restricted to admin</td></tr>';
                 return;
             }
 
             // Estimate cost-of-goods-sold using each product's current cost price against
-            // net quantity actually sold (sales minus returned quantities)
+            // net quantity actually sold (sales minus returned quantities), accumulated
+            // both overall and per-product
             let totalRevenue = 0;
             let totalCOGS = 0;
+            const perProduct = {}; // productId -> { name, icon, unit, qtySold, revenue, cogs }
+
             DB.sales.forEach(sale => {
                 sale.items.forEach(item => {
                     const netQty = item.quantity - (item.returnedQty || 0);
                     if (netQty <= 0) return;
                     const product = DB.products.find(p => p.id === item.id);
                     const cost = product ? (product.costPrice || 0) : 0;
-                    totalRevenue += netQty * item.price;
-                    totalCOGS += netQty * cost;
+                    const revenue = netQty * item.price;
+                    const cogs = netQty * cost;
+
+                    totalRevenue += revenue;
+                    totalCOGS += cogs;
+
+                    const key = item.id != null ? item.id : item.name;
+                    if (!perProduct[key]) {
+                        perProduct[key] = {
+                            name: item.name,
+                            icon: item.icon || (product ? product.icon : ''),
+                            unit: item.unit || 'pcs',
+                            qtySold: 0,
+                            revenue: 0,
+                            cogs: 0
+                        };
+                    }
+                    perProduct[key].qtySold += netQty;
+                    perProduct[key].revenue += revenue;
+                    perProduct[key].cogs += cogs;
                 });
-                totalRevenue -= 0; // refundedAmount already excluded via netQty above
             });
             const grossProfit = totalRevenue - totalCOGS;
             const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue * 100) : 0;
@@ -3465,6 +3603,23 @@
                 </div>
                 <p style="font-size:11px; color:#999; margin-top:8px;">Estimated using each product's current cost price — past sales don't store a historical cost snapshot, so this reflects today's cost prices applied retroactively, not necessarily the exact cost paid at the time of each sale. Total spent on restocking: ৳${totalPurchaseCost.toFixed(2)}.</p>
             `;
+
+            if (productMarginTbody) {
+                const rows = Object.values(perProduct)
+                    .map(p => ({ ...p, profit: p.revenue - p.cogs, marginPct: p.revenue > 0 ? ((p.revenue - p.cogs) / p.revenue * 100) : 0 }))
+                    .sort((a, b) => b.profit - a.profit);
+
+                productMarginTbody.innerHTML = rows.map(p => `
+                    <tr>
+                        <td>${p.icon} ${p.name}</td>
+                        <td>${formatQty(p.qtySold, p.unit)} ${p.unit}</td>
+                        <td>৳${p.revenue.toFixed(2)}</td>
+                        <td>৳${p.cogs.toFixed(2)}</td>
+                        <td style="color:${p.profit < 0 ? '#e74c3c' : '#27ae60'}; font-weight:600;">৳${p.profit.toFixed(2)}</td>
+                        <td>${p.marginPct.toFixed(1)}%</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No sales yet</td></tr>';
+            }
 
             const recentPurchases = DB.purchases.slice(-30).reverse();
             purchaseTbody.innerHTML = recentPurchases.map(p => `
@@ -3816,6 +3971,29 @@
         }
 
         // ===== SHIFT / DAILY CLOSING REPORT =====
+        function toDateInputValue(d) {
+            return d.toISOString().slice(0, 10);
+        }
+
+        function setShiftDateRange(preset) {
+            const today = new Date();
+            let from = new Date(today);
+            let to = new Date(today);
+
+            if (preset === 'yesterday') {
+                from.setDate(from.getDate() - 1);
+                to.setDate(to.getDate() - 1);
+            } else if (preset === 'week') {
+                const dayOfWeek = today.getDay(); // 0 = Sunday
+                from.setDate(today.getDate() - dayOfWeek);
+            }
+            // 'today' needs no adjustment — both already equal today
+
+            document.getElementById('shiftFromDate').value = toDateInputValue(from);
+            document.getElementById('shiftToDate').value = toDateInputValue(to);
+            generateShiftReport();
+        }
+
         function generateShiftReport() {
             const fromStr = document.getElementById('shiftFromDate').value;
             const toStr = document.getElementById('shiftToDate').value;
@@ -3833,6 +4011,8 @@
 
             const byMethod = {};
             const byCashier = {};
+            const txnIdsByMethod = {};
+            const missingTxnId = [];
             let grossTotal = 0, refundsTotal = 0;
 
             filtered.forEach(s => {
@@ -3842,6 +4022,15 @@
                 byCashier[s.cashier] = (byCashier[s.cashier] || 0) + net;
                 grossTotal += s.amount;
                 refundsTotal += (s.refundedAmount || 0);
+
+                if (method !== 'Cash') {
+                    if (!txnIdsByMethod[method]) txnIdsByMethod[method] = [];
+                    if (s.transactionId) {
+                        txnIdsByMethod[method].push({ invoiceNo: s.invoiceNo, transactionId: s.transactionId, amount: net });
+                    } else {
+                        missingTxnId.push({ invoiceNo: s.invoiceNo, method, amount: net, date: s.date });
+                    }
+                }
             });
 
             const netTotal = grossTotal - refundsTotal;
@@ -3852,6 +4041,25 @@
             const cashierRows = Object.entries(byCashier).map(([c, v]) => `
                 <div class="row"><span>${c}</span><span>৳ ${v.toFixed(2)}</span></div>
             `).join('');
+
+            const txnListHtml = Object.entries(txnIdsByMethod).map(([method, list]) => {
+                if (list.length === 0) return '';
+                return `
+                    <div style="margin-bottom:10px;">
+                        <strong style="font-size:12px; color:#185FA5;">${method}</strong>
+                        <div style="max-height:140px; overflow-y:auto; font-size:11px; margin-top:4px;">
+                            ${list.map(t => `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid #f0f0f0;"><span>${t.invoiceNo}</span><span>${t.transactionId}</span><span>৳${t.amount.toFixed(2)}</span></div>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('') || '<p style="color:#999; font-size:12px;">No non-cash transactions in this range.</p>';
+
+            const missingTxnHtml = missingTxnId.length > 0 ? `
+                <div class="low-stock-banner" style="margin-top:14px;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>${missingTxnId.length} non-cash sale(s) have no Transaction ID recorded: ${missingTxnId.map(m => `${m.invoiceNo} (${m.method}, ৳${m.amount.toFixed(2)})`).join(', ')}</span>
+                </div>
+            ` : '';
 
             document.getElementById('shiftReportOutput').innerHTML = `
                 <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
@@ -3873,6 +4081,11 @@
                         </div>
                     </div>
                 </div>
+                <div style="margin-top:16px;">
+                    <h5 style="color:#185FA5; margin-bottom:8px; font-size:13px;">Mobile/Card Transaction IDs <span style="color:#999; font-weight:400;">(for reconciling against your bKash/Nagad/bank statement)</span></h5>
+                    ${txnListHtml}
+                </div>
+                ${missingTxnHtml}
             `;
         }
 
