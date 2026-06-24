@@ -1648,6 +1648,40 @@
             admin: 'Full Admin Access'
         };
 
+        const STORAGE_KEY = 'pos_system_db_v1';
+
+        // ===== PASSWORD HANDLING =====
+        // Note: this is a client-side-only app with no backend/secret key, so true
+        // encryption isn't possible here. This hash is a deterrent against a password
+        // being trivially readable at a glance in localStorage/dev tools — it is NOT
+        // cryptographically secure against a determined attacker with access to the
+        // browser's storage. Real security for sensitive deployments needs a backend.
+        const PASSWORD_HASH_PREFIX = 'h1:';
+
+        function hashPassword(plain) {
+            let hash = 0;
+            const str = String(plain);
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+            }
+            // Mix in length and a salt-like constant so short/common passwords don't
+            // collide as easily as a bare checksum would
+            const mixed = (hash ^ (str.length * 2654435761)) >>> 0;
+            return PASSWORD_HASH_PREFIX + mixed.toString(36);
+        }
+
+        function isHashedPassword(value) {
+            return typeof value === 'string' && value.startsWith(PASSWORD_HASH_PREFIX);
+        }
+
+        function verifyPassword(plain, stored) {
+            if (isHashedPassword(stored)) {
+                return hashPassword(plain) === stored;
+            }
+            // Legacy plain-text password from before hashing existed — compare directly
+            return plain === stored;
+        }
+
         const DEFAULT_DB = {
             products: [
                 { id: 1, name: 'Tomato', barcode: '8901001001001', unit: 'kg', sellMode: 'loose', price: 60, costPrice: 40, stock: 50, icon: '🍅' },
@@ -1689,40 +1723,6 @@
                 taxPercent: 0
             }
         };
-
-        const STORAGE_KEY = 'pos_system_db_v1';
-
-        // ===== PASSWORD HANDLING =====
-        // Note: this is a client-side-only app with no backend/secret key, so true
-        // encryption isn't possible here. This hash is a deterrent against a password
-        // being trivially readable at a glance in localStorage/dev tools — it is NOT
-        // cryptographically secure against a determined attacker with access to the
-        // browser's storage. Real security for sensitive deployments needs a backend.
-        const PASSWORD_HASH_PREFIX = 'h1:';
-
-        function hashPassword(plain) {
-            let hash = 0;
-            const str = String(plain);
-            for (let i = 0; i < str.length; i++) {
-                hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-            }
-            // Mix in length and a salt-like constant so short/common passwords don't
-            // collide as easily as a bare checksum would
-            const mixed = (hash ^ (str.length * 2654435761)) >>> 0;
-            return PASSWORD_HASH_PREFIX + mixed.toString(36);
-        }
-
-        function isHashedPassword(value) {
-            return typeof value === 'string' && value.startsWith(PASSWORD_HASH_PREFIX);
-        }
-
-        function verifyPassword(plain, stored) {
-            if (isHashedPassword(stored)) {
-                return hashPassword(plain) === stored;
-            }
-            // Legacy plain-text password from before hashing existed — compare directly
-            return plain === stored;
-        }
 
         function loadDB() {
             try {
@@ -4038,6 +4038,7 @@
             const canvas = document.getElementById('salesChart');
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
+            if (!ctx) return;
             const width = canvas.clientWidth || 600;
             const height = 90;
             canvas.width = width;
