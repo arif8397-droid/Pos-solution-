@@ -1035,9 +1035,12 @@
                         </div>
 
                         <div class="invoice-panel">
-                            <div class="panel-header">
-                                <h3><i class="fas fa-receipt"></i> Invoice</h3>
-                                <p>Current transaction</p>
+                            <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                                <div>
+                                    <h3><i class="fas fa-receipt"></i> Invoice</h3>
+                                    <p>Current transaction</p>
+                                </div>
+                                <button class="btn-edit" onclick="openHeldSalesModal()" title="View parked sales"><i class="fas fa-pause-circle"></i> Held <span id="heldSalesCountBadge"></span></button>
                             </div>
                             <div class="invoice-section" id="cartItems">
                                 <div class="empty-cart">
@@ -1087,6 +1090,7 @@
                                         <i class="fas fa-credit-card"></i> Complete (F9)
                                     </button>
                                     <button class="btn-action btn-secondary" onclick="previewCart()" title="F8"><i class="fas fa-eye"></i> Preview (F8)</button>
+                                    <button class="btn-action btn-secondary" onclick="holdCurrentSale()" title="F7"><i class="fas fa-pause-circle"></i> Hold (F7)</button>
                                     <button class="btn-action btn-secondary" onclick="clearCart()" title="F10">Clear (F10)</button>
                                 </div>
                             </div>
@@ -1228,6 +1232,50 @@
                             <button type="button" class="btn-add-product" onclick="generateShiftReport()"><i class="fas fa-calculator"></i> Generate</button>
                         </div>
                         <div id="shiftReportOutput" style="margin-top: 14px;"></div>
+                    </div>
+
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h4><i class="fas fa-money-bill-wave"></i> Cash Reconciliation</h4>
+                        <p style="font-size:12px; color:#666; margin-bottom:12px;">
+                            Count the physical cash drawer at closing and record it here. This compares what's actually in the drawer against what the till expected from cash sales for the date you pick.
+                        </p>
+                        <div class="form-grid" style="grid-template-columns: 1fr 1fr auto; align-items:end;">
+                            <div class="form-field">
+                                <label>Date to Reconcile</label>
+                                <input type="date" id="reconcileDate">
+                            </div>
+                            <div class="form-field">
+                                <label>Opening Float (৳, optional)</label>
+                                <input type="number" id="reconcileOpeningFloat" min="0" step="0.01" placeholder="0.00" oninput="updateReconcilePreview()">
+                            </div>
+                            <button type="button" class="btn-edit" onclick="setReconcileToday()">Today</button>
+                        </div>
+                        <div class="form-field" style="margin-bottom: 10px;">
+                            <label>Cash Actually Counted in Drawer (৳)</label>
+                            <input type="number" id="reconcileCountedCash" min="0" step="0.01" placeholder="0.00" oninput="updateReconcilePreview()">
+                        </div>
+                        <div class="return-summary-box" id="reconcilePreview" style="margin-bottom:12px;"></div>
+                        <div class="form-field" style="margin-bottom: 10px;">
+                            <label>Notes (optional)</label>
+                            <input type="text" id="reconcileNotes" placeholder="e.g. ৳50 short, possibly a miscounted change">
+                        </div>
+                        <button type="button" class="btn-add-product" onclick="saveCashReconciliation()"><i class="fas fa-check"></i> Save Reconciliation</button>
+
+                        <h5 style="color:#185FA5; margin-top:18px; margin-bottom:8px; font-size:13px;">Reconciliation History</h5>
+                        <div style="max-height: 220px; overflow-y: auto;">
+                            <table class="products-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Expected Cash</th>
+                                        <th>Counted</th>
+                                        <th>Difference</th>
+                                        <th>By</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reconciliationHistoryBody"></tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <div class="admin-card" style="margin-bottom: 20px;">
@@ -1618,6 +1666,20 @@
         </div>
     </div>
 
+    <!-- HELD / PARKED SALES MODAL -->
+    <div id="heldSalesModal" class="modal">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-pause-circle"></i> Held Sales</h2>
+                <button class="close-modal" onclick="closeHeldSalesModal()">✕</button>
+            </div>
+            <p style="font-size:12px; color:#666; margin-bottom:12px;">
+                Recalling a held sale replaces whatever is currently in your cart. Hold the current cart first if it has anything in it you don't want to lose.
+            </p>
+            <div id="heldSalesList" style="max-height: 360px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
     <!-- RESTOCK / PURCHASE MODAL -->
     <div id="restockModal" class="modal">
         <div class="modal-content" style="max-width: 460px;">
@@ -1724,6 +1786,8 @@
             purchases: [],
             trash: [],
             resetRequests: [],
+            heldSales: [],
+            reconciliations: [],
             invoiceCounter: 0,
             auditLog: [],
             settings: {
@@ -1777,6 +1841,8 @@
                         purchases: saved.purchases || [],
                         trash: saved.trash || [],
                         resetRequests: saved.resetRequests || [],
+                        heldSales: saved.heldSales || [],
+                        reconciliations: saved.reconciliations || [],
                         invoiceCounter: saved.invoiceCounter || 0,
                         auditLog: saved.auditLog || [],
                         currentUser: null,
@@ -1798,6 +1864,8 @@
                     purchases: DB.purchases,
                     trash: DB.trash,
                     resetRequests: DB.resetRequests,
+                    heldSales: DB.heldSales,
+                    reconciliations: DB.reconciliations,
                     invoiceCounter: DB.invoiceCounter,
                     auditLog: DB.auditLog,
                     settings: DB.settings
@@ -1899,6 +1967,7 @@
             loadReports();
             loadUsersList();
             checkLowStock();
+            updateHeldSalesBadge();
             updateClock();
             setInterval(updateClock, 1000);
             startSessionTimeoutTracking();
@@ -1989,7 +2058,7 @@
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
             if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); }
-            if (section === 'reports') { renderSalesChart(); }
+            if (section === 'reports') { renderSalesChart(); loadReconciliationHistory(); }
         }
 
         function logout() {
@@ -3353,6 +3422,114 @@
             }
         }
 
+        // ===== HOLD / PARK SALES =====
+        function holdCurrentSale() {
+            if (!hasPerm('pos')) { alert('POS access denied'); return; }
+            if (cart.length === 0) {
+                alert('Cart is empty — nothing to hold.');
+                return;
+            }
+
+            const note = prompt('Optional note to identify this held sale later (e.g. customer name):', '') || '';
+
+            DB.heldSales.push({
+                id: Date.now() + Math.random(),
+                heldAt: Date.now(),
+                heldBy: DB.currentUser.id,
+                note: note.trim(),
+                cart: JSON.parse(JSON.stringify(cart)),
+                discountInput: document.getElementById('discountInput').value,
+                discountType: document.getElementById('discountType').value,
+                paymentMethod: document.getElementById('paymentMethod').value,
+                transactionId: document.getElementById('transactionIdInput').value
+            });
+            saveDB();
+            logAudit('sale_held', `Held a cart with ${cart.length} item(s)${note ? ' — "' + note + '"' : ''}`);
+
+            // Clear the working cart now that it's safely parked, same field resets as Clear
+            cart = [];
+            updateCart();
+            document.getElementById('cashAmount').value = '';
+            document.getElementById('discountInput').value = '';
+            document.getElementById('transactionIdInput').value = '';
+            document.getElementById('changeDisplay').style.display = 'none';
+            document.getElementById('checkoutBtn').disabled = document.getElementById('paymentMethod').value === 'Cash';
+
+            updateHeldSalesBadge();
+            alert('✓ Sale held. You can recall it from the "Held" button above the cart.');
+        }
+
+        function updateHeldSalesBadge() {
+            const badge = document.getElementById('heldSalesCountBadge');
+            if (!badge) return;
+            badge.textContent = DB.heldSales.length > 0 ? `(${DB.heldSales.length})` : '';
+        }
+
+        function openHeldSalesModal() {
+            loadHeldSalesList();
+            document.getElementById('heldSalesModal').classList.add('active');
+        }
+
+        function closeHeldSalesModal() {
+            document.getElementById('heldSalesModal').classList.remove('active');
+        }
+
+        function loadHeldSalesList() {
+            const list = document.getElementById('heldSalesList');
+            const held = DB.heldSales.slice().reverse();
+
+            list.innerHTML = held.map(h => {
+                const total = h.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                const itemSummary = h.cart.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ');
+                const minutesAgo = Math.floor((Date.now() - h.heldAt) / 60000);
+                return `
+                    <div class="user-card-row" style="align-items:flex-start;">
+                        <div>
+                            <div class="uname">${h.note || '(no note)'} <span style="color:#999; font-weight:400;">· ৳${total.toFixed(2)}</span></div>
+                            <div class="urole">${itemSummary}</div>
+                            <div class="urole">Held by ${h.heldBy} · ${minutesAgo < 1 ? 'just now' : minutesAgo + ' min ago'}</div>
+                        </div>
+                        <div>
+                            <button class="btn-small edit" onclick="recallHeldSale('${h.id}')"><i class="fas fa-undo"></i> Recall</button>
+                            <button class="btn-small del" onclick="deleteHeldSale('${h.id}')"><i class="fas fa-trash"></i> Delete</button>
+                        </div>
+                    </div>
+                `;
+            }).join('') || '<p style="color:#999; font-size:12px;">No held sales.</p>';
+        }
+
+        function recallHeldSale(heldId) {
+            const held = DB.heldSales.find(h => String(h.id) === String(heldId));
+            if (!held) return;
+
+            if (cart.length > 0 && !confirm('Your current cart is not empty. Recalling this held sale will replace it. Continue?')) {
+                return;
+            }
+
+            cart = JSON.parse(JSON.stringify(held.cart));
+            document.getElementById('discountInput').value = held.discountInput || '';
+            document.getElementById('discountType').value = held.discountType || 'amount';
+            document.getElementById('paymentMethod').value = held.paymentMethod || 'Cash';
+            document.getElementById('transactionIdInput').value = held.transactionId || '';
+            onPaymentMethodChange();
+
+            DB.heldSales = DB.heldSales.filter(h => String(h.id) !== String(heldId));
+            saveDB();
+            logAudit('sale_recalled', `Recalled a held cart with ${cart.length} item(s)${held.note ? ' — "' + held.note + '"' : ''}`);
+
+            updateCart();
+            updateHeldSalesBadge();
+            closeHeldSalesModal();
+        }
+
+        function deleteHeldSale(heldId) {
+            if (!confirm('Delete this held sale permanently? It cannot be recovered.')) return;
+            DB.heldSales = DB.heldSales.filter(h => String(h.id) !== String(heldId));
+            saveDB();
+            loadHeldSalesList();
+            updateHeldSalesBadge();
+        }
+
         function getCartTotals() {
             const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
             const discountRaw = parseFloat(document.getElementById('discountInput').value) || 0;
@@ -3620,7 +3797,10 @@
             const modalOpen = document.querySelector('.modal.active');
             if (!posActive || modalOpen) return;
 
-            if (e.key === 'F8') {
+            if (e.key === 'F7') {
+                e.preventDefault();
+                holdCurrentSale();
+            } else if (e.key === 'F8') {
                 e.preventDefault();
                 previewCart();
             } else if (e.key === 'F9') {
@@ -4304,6 +4484,122 @@
                 </div>
                 ${missingTxnHtml}
             `;
+        }
+
+        // ===== CASH RECONCILIATION =====
+        function setReconcileToday() {
+            document.getElementById('reconcileDate').value = toDateInputValue(new Date());
+            updateReconcilePreview();
+        }
+
+        function getExpectedCashForDate(dateStr) {
+            if (!dateStr) return 0;
+            const from = new Date(dateStr + 'T00:00:00');
+            const to = new Date(dateStr + 'T23:59:59');
+
+            let expectedCash = 0;
+            DB.sales.forEach(s => {
+                const d = new Date(s.id);
+                if (d < from || d > to) return;
+                const method = s.paymentMethod || 'Cash';
+                if (method === 'Cash') {
+                    expectedCash += s.amount - (s.refundedAmount || 0);
+                }
+            });
+            return expectedCash;
+        }
+
+        function updateReconcilePreview() {
+            const dateStr = document.getElementById('reconcileDate').value;
+            const preview = document.getElementById('reconcilePreview');
+            if (!dateStr) {
+                preview.innerHTML = 'Pick a date to see expected cash.';
+                return;
+            }
+
+            const openingFloat = parseFloat(document.getElementById('reconcileOpeningFloat').value) || 0;
+            const expectedFromSales = getExpectedCashForDate(dateStr);
+            const expectedTotal = openingFloat + expectedFromSales;
+            const counted = parseFloat(document.getElementById('reconcileCountedCash').value);
+
+            let html = `
+                <div class="row"><span>Opening Float</span><span>৳ ${openingFloat.toFixed(2)}</span></div>
+                <div class="row"><span>Cash Sales (net of refunds)</span><span>৳ ${expectedFromSales.toFixed(2)}</span></div>
+                <div class="row grand"><span>Expected in Drawer</span><span>৳ ${expectedTotal.toFixed(2)}</span></div>
+            `;
+
+            if (!isNaN(counted)) {
+                const diff = counted - expectedTotal;
+                const diffColor = diff === 0 ? '#27ae60' : (diff < 0 ? '#e74c3c' : '#BA7517');
+                const diffLabel = diff === 0 ? 'Matches exactly' : (diff < 0 ? `Short by ৳${Math.abs(diff).toFixed(2)}` : `Over by ৳${diff.toFixed(2)}`);
+                html += `<div class="row" style="margin-top:6px; color:${diffColor}; font-weight:700;"><span>Difference</span><span>${diffLabel}</span></div>`;
+            }
+
+            preview.innerHTML = html;
+        }
+
+        function saveCashReconciliation() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+
+            const dateStr = document.getElementById('reconcileDate').value;
+            if (!dateStr) {
+                alert('Pick a date to reconcile.');
+                return;
+            }
+
+            const openingFloat = parseFloat(document.getElementById('reconcileOpeningFloat').value) || 0;
+            const counted = parseFloat(document.getElementById('reconcileCountedCash').value);
+            if (isNaN(counted)) {
+                alert('Enter the cash actually counted in the drawer.');
+                return;
+            }
+
+            const expectedFromSales = getExpectedCashForDate(dateStr);
+            const expectedTotal = openingFloat + expectedFromSales;
+            const difference = counted - expectedTotal;
+            const notes = document.getElementById('reconcileNotes').value.trim();
+
+            // Replace any existing reconciliation already saved for this exact date
+            DB.reconciliations = DB.reconciliations.filter(r => r.date !== dateStr);
+            DB.reconciliations.push({
+                id: Date.now(),
+                date: dateStr,
+                openingFloat,
+                expectedFromSales,
+                expectedTotal,
+                counted,
+                difference,
+                notes,
+                reconciledBy: DB.currentUser.id,
+                reconciledAt: Date.now()
+            });
+            saveDB();
+            logAudit('cash_reconciled', `${dateStr}: expected ৳${expectedTotal.toFixed(2)}, counted ৳${counted.toFixed(2)}, diff ৳${difference.toFixed(2)}${notes ? ' — ' + notes : ''}`);
+
+            loadReconciliationHistory();
+            document.getElementById('reconcileNotes').value = '';
+            alert(difference === 0
+                ? '✓ Reconciliation saved. Drawer matches exactly.'
+                : `✓ Reconciliation saved. Difference: ৳${difference.toFixed(2)} (${difference < 0 ? 'short' : 'over'}).`);
+        }
+
+        function loadReconciliationHistory() {
+            const tbody = document.getElementById('reconciliationHistoryBody');
+            if (!tbody) return;
+            const history = DB.reconciliations.slice().sort((a, b) => b.date.localeCompare(a.date));
+
+            tbody.innerHTML = history.map(r => {
+                const diffColor = r.difference === 0 ? '#27ae60' : (r.difference < 0 ? '#e74c3c' : '#BA7517');
+                return `
+                    <tr>
+                        <td>${r.date}</td>
+                        <td>৳${r.expectedTotal.toFixed(2)}</td>
+                        <td>৳${r.counted.toFixed(2)}</td>
+                        <td style="color:${diffColor}; font-weight:600;">৳${r.difference.toFixed(2)}</td>
+                        <td style="font-size:11px;">${r.reconciledBy}</td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="5" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
         }
 
         // ===== CSV / EXCEL EXPORT =====
