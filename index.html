@@ -891,6 +891,14 @@
             .invoice-modal-content { max-width: 100%; box-shadow: none; }
             .invoice-toolbar, .no-print { display: none !important; }
         }
+
+        /* Default page size for full invoices/receipts — matches an 80mm thermal
+           receipt printer (e.g. Epson TM-T81III). Label printing temporarily
+           overrides this via a dynamically injected @page rule — see
+           printWithPageSize() in the script below. */
+        @media print {
+            @page { size: 80mm auto; margin: 2mm; }
+        }
     </style>
 </head>
 <body>
@@ -1607,7 +1615,7 @@
             <div class="invoice-toolbar no-print">
                 <strong style="font-size:14px; color:#185FA5;"><i class="fas fa-receipt"></i> Invoice Preview</strong>
                 <div>
-                    <button class="btn-action btn-checkout" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+                    <button class="btn-action btn-checkout" onclick="printInvoiceModal()"><i class="fas fa-print"></i> Print</button>
                     <button class="close-modal" onclick="closeInvoiceModal()" style="margin-left:8px;">✕</button>
                 </div>
             </div>
@@ -3004,6 +3012,40 @@
         }
 
         // ===== BARCODE LABEL GENERATION =====
+        // ===== PRINT PAGE SIZE HANDLING =====
+        // The browser's @page rule can't be set with plain CSS variables, so to print
+        // labels at a small size (default 40mm x 30mm) while invoices/receipts print
+        // at full 80mm receipt width, we inject a temporary <style> tag with the
+        // correct @page rule right before printing, then remove it afterward.
+        let currentPrintMode = 'invoice'; // 'invoice' | 'label'
+        const LABEL_PAGE_WIDTH_MM = 40;
+        const LABEL_PAGE_HEIGHT_MM = 30;
+
+        function printInvoiceModal() {
+            // Remove any leftover tag from a previous print before adding a fresh one,
+            // in case this is called again before the earlier cleanup timer has fired.
+            const existingTag = document.getElementById('dynamicPrintPageSize');
+            if (existingTag) existingTag.remove();
+
+            const styleTag = document.createElement('style');
+            styleTag.id = 'dynamicPrintPageSize';
+
+            if (currentPrintMode === 'label') {
+                styleTag.textContent = `@media print { @page { size: ${LABEL_PAGE_WIDTH_MM}mm ${LABEL_PAGE_HEIGHT_MM}mm; margin: 1mm; } }`;
+            } else {
+                styleTag.textContent = `@media print { @page { size: 80mm auto; margin: 2mm; } }`;
+            }
+
+            document.head.appendChild(styleTag);
+            window.print();
+            // Clean up shortly after the print dialog is invoked; browsers read
+            // @page synchronously when print() is called, so this is safe.
+            setTimeout(() => {
+                const tag = document.getElementById('dynamicPrintPageSize');
+                if (tag) tag.remove();
+            }, 1000);
+        }
+
         function printBarcodeLabel(productId) {
             const product = DB.products.find(p => p.id === productId);
             if (!product) return;
@@ -3028,6 +3070,7 @@
             for (let i = 0; i < copies; i++) {
                 renderBarcodeSVG(product.barcode, document.getElementById(`barcodeSvg_${i}`));
             }
+            currentPrintMode = 'label';
             document.getElementById('invoiceModal').classList.add('active');
             if (copies > 1) logAudit('label_printed', `Printed ${copies} copies of label for "${product.name}"`);
         }
@@ -3173,6 +3216,7 @@
             `;
             renderBarcodeSVG(packBarcode, document.getElementById('barcodeSvg'));
             closePackLabelModal();
+            currentPrintMode = 'label';
             document.getElementById('invoiceModal').classList.add('active');
             logAudit('pack_label_printed', `${product.name}: ${smallQty}${isCount ? 'pcs' : smallUnit} pack label (৳${price.toFixed(2)}) — barcode ${packBarcode}`);
         }
@@ -3755,6 +3799,7 @@
                 ${s.invoiceFooter ? `<div class="invoice-footer-note">${s.invoiceFooter}</div>` : ''}
             `;
 
+            currentPrintMode = 'invoice';
             document.getElementById('invoiceModal').classList.add('active');
         }
 
