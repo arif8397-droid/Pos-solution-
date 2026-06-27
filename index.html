@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Professional Enterprise Grocery POS</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -1014,7 +1015,10 @@
         <div class="main-content">
             <div class="top-bar">
                 <h2 id="sectionTitle">Point of Sale</h2>
-                <div id="currentTime"></div>
+                <div style="display:flex; align-items:center; gap:14px;">
+                    <span id="supabaseSyncStatus" style="font-size:12px;"></span>
+                    <div id="currentTime"></div>
+                </div>
             </div>
 
             <div class="content-area scrollbar">
@@ -1723,6 +1727,34 @@
     </div>
 
     <script>
+        // ============================================================
+        // SUPABASE CONNECTION CONFIG
+        // Paste your own Project URL and anon/public API key below.
+        // Find both in your Supabase dashboard → Settings → API.
+        // NEVER paste your service_role key or database password here —
+        // only the anon/public key, which is designed to be safe in
+        // client-side code.
+        // ============================================================
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+
+        let supabaseClient = null;
+        let supabaseConnected = false;
+        let supabaseRealtimeChannels = [];
+
+        function isSupabaseConfigured() {
+            return SUPABASE_URL && SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
+                   SUPABASE_ANON_KEY && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
+        }
+
+        if (isSupabaseConfigured() && typeof window.supabase !== 'undefined') {
+            try {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            } catch (e) {
+                console.error('Failed to initialize Supabase client', e);
+            }
+        }
+
         // ===== PERMISSION DEFINITIONS =====
         const ALL_PERMISSIONS = {
             pos: 'Make Sales (POS)',
@@ -1882,6 +1914,178 @@
             } catch (e) {
                 console.error('Failed to save data', e);
             }
+            if (supabaseConnected) {
+                queueSupabaseSync();
+            }
+        }
+
+        // ============================================================
+        // SUPABASE SYNC LAYER
+        // The rest of the app reads/writes the in-memory `DB` object
+        // exactly as it always has — synchronously, no awaiting. This
+        // layer pushes those changes to Supabase in the background after
+        // saveDB() runs, and listens for changes from OTHER counters via
+        // realtime subscriptions, merging them straight into the same
+        // `DB` object and re-rendering whatever's on screen.
+        // ============================================================
+        let supabaseSyncTimer = null;
+        let supabaseSyncInFlight = false;
+
+        function queueSupabaseSync() {
+            if (supabaseSyncTimer) clearTimeout(supabaseSyncTimer);
+            supabaseSyncTimer = setTimeout(pushLocalChangesToSupabase, 400);
+        }
+
+        // ---- row mappers: JS camelCase object <-> Postgres snake_case row ----
+        function productToRow(p) {
+            return {
+                id: p.id, name: p.name, barcode: p.barcode, unit: p.unit,
+                sell_mode: p.sellMode, price: p.price, cost_price: p.costPrice || 0,
+                stock: p.stock, icon: p.icon, updated_at: new Date().toISOString()
+            };
+        }
+        function rowToProduct(r) {
+            return {
+                id: r.id, name: r.name, barcode: r.barcode, unit: r.unit,
+                sellMode: r.sell_mode, price: Number(r.price), costPrice: Number(r.cost_price || 0),
+                stock: Number(r.stock), icon: r.icon
+            };
+        }
+        function saleToRow(s) {
+            return {
+                id: s.id, invoice_no: s.invoiceNo, sale_date: new Date(s.id).toISOString(),
+                items: s.items, subtotal: s.subtotal, discount_amount: s.discountAmount || 0,
+                amount: s.amount, payment_method: s.paymentMethod, transaction_id: s.transactionId || null,
+                cash_amount: s.cashAmount, change: s.change || 0, cashier: s.cashier,
+                status: s.status, refunded_amount: s.refundedAmount || 0
+            };
+        }
+        function rowToSale(r) {
+            return {
+                id: r.id, invoiceNo: r.invoice_no, date: new Date(r.sale_date).toLocaleString(),
+                items: r.items, subtotal: Number(r.subtotal), discountAmount: Number(r.discount_amount || 0),
+                amount: Number(r.amount), paymentMethod: r.payment_method, transactionId: r.transaction_id || '',
+                cashAmount: Number(r.cash_amount), change: Number(r.change || 0), cashier: r.cashier,
+                status: r.status, refundedAmount: Number(r.refunded_amount || 0)
+            };
+        }
+
+        // Push every locally-known product/sale to Supabase. Uses upsert so this
+        // is safe to call repeatedly — it never duplicates rows.
+        async function pushLocalChangesToSupabase() {
+            if (!supabaseClient || supabaseSyncInFlight) return;
+            supabaseSyncInFlight = true;
+            try {
+                if (DB.products.length) {
+                    await supabaseClient.from('products').upsert(DB.products.map(productToRow));
+                }
+                if (DB.sales.length) {
+                    await supabaseClient.from('sales').upsert(DB.sales.map(saleToRow));
+                }
+                updateSyncStatusUI('synced');
+            } catch (e) {
+                console.error('Supabase sync failed', e);
+                updateSyncStatusUI('error');
+            } finally {
+                supabaseSyncInFlight = false;
+            }
+        }
+
+        // Pull the current state of shared tables from Supabase into the
+        // in-memory DB object. Called once on startup after connecting.
+        async function pullAllFromSupabase() {
+            if (!supabaseClient) return;
+            const { data: productRows, error: prodErr } = await supabaseClient.from('products').select('*');
+            if (prodErr) throw prodErr;
+            if (productRows && productRows.length) {
+                DB.products = productRows.map(rowToProduct);
+            }
+
+            const { data: saleRows, error: saleErr } = await supabaseClient.from('sales').select('*').order('sale_date', { ascending: true });
+            if (saleErr) throw saleErr;
+            if (saleRows) {
+                DB.sales = saleRows.map(rowToSale);
+            }
+        }
+
+        // Subscribe to realtime changes so other counters' actions show up
+        // here live, without needing a manual refresh.
+        function subscribeToSupabaseRealtime() {
+            if (!supabaseClient) return;
+
+            const productsChannel = supabaseClient.channel('products-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.products = DB.products.filter(p => p.id !== payload.old.id);
+                    } else {
+                        const updated = rowToProduct(payload.new);
+                        const idx = DB.products.findIndex(p => p.id === updated.id);
+                        if (idx >= 0) DB.products[idx] = updated;
+                        else DB.products.push(updated);
+                    }
+                    refreshVisibleProductViews();
+                })
+                .subscribe();
+
+            const salesChannel = supabaseClient.channel('sales-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.sales = DB.sales.filter(s => s.id !== payload.old.id);
+                    } else {
+                        const updated = rowToSale(payload.new);
+                        const idx = DB.sales.findIndex(s => s.id === updated.id);
+                        if (idx >= 0) DB.sales[idx] = updated;
+                        else DB.sales.push(updated);
+                    }
+                    if (typeof loadReports === 'function' && document.getElementById('reports')?.classList.contains('active')) {
+                        loadReports();
+                    }
+                })
+                .subscribe();
+
+            supabaseRealtimeChannels.push(productsChannel, salesChannel);
+        }
+
+        // Re-render whichever product views are currently visible, so a stock
+        // change from another counter shows up immediately without a refresh.
+        function refreshVisibleProductViews() {
+            if (typeof loadProducts === 'function') loadProducts();
+            if (typeof loadProductsTable === 'function') loadProductsTable();
+            if (typeof checkLowStock === 'function') checkLowStock();
+        }
+
+        function updateSyncStatusUI(state) {
+            const el = document.getElementById('supabaseSyncStatus');
+            if (!el) return;
+            if (state === 'connecting') { el.textContent = '🔄 Connecting to shared inventory...'; el.style.color = '#BA7517'; }
+            else if (state === 'synced') { el.textContent = '🟢 Connected — shared inventory live'; el.style.color = '#27ae60'; }
+            else if (state === 'error') { el.textContent = '🔴 Sync error — working from local data'; el.style.color = '#e74c3c'; }
+            else if (state === 'offline') { el.textContent = '⚪ Not connected — using local data only'; el.style.color = '#999'; }
+        }
+
+        async function initSupabaseConnection() {
+            if (!isSupabaseConfigured()) {
+                updateSyncStatusUI('offline');
+                return;
+            }
+            if (!supabaseClient) {
+                console.error('Supabase URL/key are set but the client library failed to load.');
+                updateSyncStatusUI('error');
+                return;
+            }
+            updateSyncStatusUI('connecting');
+            try {
+                await pullAllFromSupabase();
+                subscribeToSupabaseRealtime();
+                supabaseConnected = true;
+                updateSyncStatusUI('synced');
+                refreshVisibleProductViews();
+                if (typeof loadReports === 'function') loadReports();
+            } catch (e) {
+                console.error('Could not connect to Supabase, continuing with local data only', e);
+                supabaseConnected = false;
+                updateSyncStatusUI('error');
+            }
         }
 
         const AUDIT_LOG_RETENTION_DAYS = 365;
@@ -1943,6 +2147,7 @@
         function initializeApp() {
             pruneAuditLog();
             saveDB();
+            initSupabaseConnection();
 
             document.getElementById('currentUser').textContent = (DB.currentUser.name || DB.currentUser.id).toUpperCase();
             document.getElementById('currentRole').textContent = DB.currentUser.role.toUpperCase();
@@ -3631,7 +3836,7 @@
             document.getElementById('checkoutBtn').disabled = !document.getElementById('transactionIdInput').value.trim();
         }
 
-        function checkout() {
+        async function checkout() {
             if (!hasPerm('pos')) {
                 alert('POS access denied');
                 return;
@@ -3657,19 +3862,6 @@
                 return;
             }
 
-            for (const item of cart) {
-                const product = DB.products.find(p => p.id === item.id);
-                if (product && item.quantity > product.stock + 0.0001) {
-                    alert(`Not enough stock for "${item.name}". Available: ${formatQty(product.stock, product.unit)} ${product.unit}`);
-                    return;
-                }
-            }
-
-            cart.forEach(item => {
-                const product = DB.products.find(p => p.id === item.id);
-                if (product) product.stock = Math.round((product.stock - item.quantity) * 1000) / 1000;
-            });
-
             DB.invoiceCounter = (DB.invoiceCounter || 0) + 1;
             const invoiceNo = (DB.settings.invoicePrefix || 'INV') + '-' + String(DB.invoiceCounter).padStart(5, '0');
 
@@ -3689,7 +3881,71 @@
                 status: 'completed',
                 refundedAmount: 0
             };
-            DB.sales.push(sale);
+
+            if (supabaseConnected) {
+                // Atomic path: the database locks and checks every item's stock in a
+                // single transaction. If ANY item is short, the WHOLE sale is rejected
+                // and nothing is deducted — this is what stops two counters from both
+                // selling the last unit of something at the same instant.
+                const checkoutBtn = document.getElementById('checkoutBtn');
+                checkoutBtn.disabled = true;
+                checkoutBtn.textContent = 'Processing...';
+
+                try {
+                    const { data, error } = await supabaseClient.rpc('process_sale', {
+                        p_sale_id: sale.id,
+                        p_invoice_no: sale.invoiceNo,
+                        p_items: cart.map(i => ({ id: i.id, quantity: i.quantity })),
+                        p_full_sale: sale
+                    });
+
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'This sale could not be completed — another counter may have just sold the remaining stock. Please review the cart.');
+                        checkoutBtn.disabled = false;
+                        checkoutBtn.innerHTML = '<i class="fas fa-credit-card"></i> Complete (F9)';
+                        return;
+                    }
+
+                    // Database is now the source of truth for the items just sold —
+                    // pull the fresh stock numbers down rather than guessing locally.
+                    await pullAllFromSupabase();
+                } catch (e) {
+                    console.error('Atomic checkout failed, falling back to local-only deduction', e);
+                    alert('Could not reach shared inventory — completing this sale locally instead. Stock levels may need manual reconciliation with other counters.');
+                    for (const item of cart) {
+                        const product = DB.products.find(p => p.id === item.id);
+                        if (product && item.quantity > product.stock + 0.0001) {
+                            alert(`Not enough stock for "${item.name}". Available: ${formatQty(product.stock, product.unit)} ${product.unit}`);
+                            checkoutBtn.disabled = false;
+                            checkoutBtn.innerHTML = '<i class="fas fa-credit-card"></i> Complete (F9)';
+                            return;
+                        }
+                    }
+                    cart.forEach(item => {
+                        const product = DB.products.find(p => p.id === item.id);
+                        if (product) product.stock = Math.round((product.stock - item.quantity) * 1000) / 1000;
+                    });
+                    DB.sales.push(sale);
+                }
+                checkoutBtn.innerHTML = '<i class="fas fa-credit-card"></i> Complete (F9)';
+            } else {
+                // No Supabase connection — same local-only check-then-deduct as before.
+                // This has the same small race-condition risk it always had on a
+                // single device, which is moot since there's only one device anyway.
+                for (const item of cart) {
+                    const product = DB.products.find(p => p.id === item.id);
+                    if (product && item.quantity > product.stock + 0.0001) {
+                        alert(`Not enough stock for "${item.name}". Available: ${formatQty(product.stock, product.unit)} ${product.unit}`);
+                        return;
+                    }
+                }
+                cart.forEach(item => {
+                    const product = DB.products.find(p => p.id === item.id);
+                    if (product) product.stock = Math.round((product.stock - item.quantity) * 1000) / 1000;
+                });
+                DB.sales.push(sale);
+            }
 
             cart = [];
             document.getElementById('cashAmount').value = '';
