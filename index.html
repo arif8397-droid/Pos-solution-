@@ -1735,8 +1735,8 @@
         // only the anon/public key, which is designed to be safe in
         // client-side code.
         // ============================================================
-        const SUPABASE_URL = 'https://eyptcvydovfuvpmyezeh.supabase.co/';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5cHRjdnlkb3ZmdXZwbXllemVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzNDE1MDUsImV4cCI6MjA5NzkxNzUwNX0.RJjqOgz0n9LBrW6r3PpEzDa2DdbHP2jQB55KritZiXE';
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
         let supabaseClient = null;
         let supabaseConnected = false;
@@ -1969,19 +1969,101 @@
                 status: r.status, refundedAmount: Number(r.refunded_amount || 0)
             };
         }
+        function userToRow(u) {
+            return {
+                id: u.id, name: u.name || null, password_hash: u.password,
+                role: u.role, permissions: u.permissions, updated_at: new Date().toISOString()
+            };
+        }
+        function rowToUser(r) {
+            return { id: r.id, name: r.name, password: r.password_hash, role: r.role, permissions: r.permissions };
+        }
+        function purchaseToRow(p) {
+            return {
+                id: p.id, purchase_date: new Date(p.id).toISOString(), product_id: p.productId,
+                product_name: p.productName, quantity: p.quantity, unit: p.unit,
+                cost_price: p.costPrice, total_cost: p.totalCost, supplier: p.supplier || null,
+                notes: p.notes || null, added_by: p.addedBy
+            };
+        }
+        function rowToPurchase(r) {
+            return {
+                id: r.id, date: new Date(r.purchase_date).toLocaleString(), productId: r.product_id,
+                productName: r.product_name, quantity: Number(r.quantity), unit: r.unit,
+                costPrice: Number(r.cost_price), totalCost: Number(r.total_cost),
+                supplier: r.supplier || '', notes: r.notes || '', addedBy: r.added_by
+            };
+        }
+        function trashToRow(t) {
+            return { id: String(t.id), item_type: t.type, deleted_at: new Date(t.deletedAt).toISOString(), deleted_by: t.deletedBy, data: t.data };
+        }
+        function rowToTrash(r) {
+            return { id: r.id, type: r.item_type, deletedAt: new Date(r.deleted_at).getTime(), deletedBy: r.deleted_by, data: r.data };
+        }
+        function resetRequestToRow(r) {
+            return { id: String(r.id), user_id: r.userId, code: r.code, created_at: new Date(r.createdAt).toISOString(), used: r.used };
+        }
+        function rowToResetRequest(r) {
+            return { id: r.id, userId: r.user_id, code: r.code, createdAt: new Date(r.created_at).getTime(), used: r.used };
+        }
+        function heldSaleToRow(h) {
+            return {
+                id: String(h.id), held_at: new Date(h.heldAt).toISOString(), held_by: h.heldBy, note: h.note || null,
+                cart: h.cart, discount_input: h.discountInput || null, discount_type: h.discountType || null,
+                payment_method: h.paymentMethod || null, transaction_id: h.transactionId || null
+            };
+        }
+        function rowToHeldSale(r) {
+            return {
+                id: r.id, heldAt: new Date(r.held_at).getTime(), heldBy: r.held_by, note: r.note || '',
+                cart: r.cart, discountInput: r.discount_input || '', discountType: r.discount_type || 'amount',
+                paymentMethod: r.payment_method || 'Cash', transactionId: r.transaction_id || ''
+            };
+        }
+        function reconciliationToRow(r) {
+            return {
+                id: r.id, recon_date: r.date, opening_float: r.openingFloat, expected_from_sales: r.expectedFromSales,
+                expected_total: r.expectedTotal, counted: r.counted, difference: r.difference,
+                notes: r.notes || null, reconciled_by: r.reconciledBy, reconciled_at: new Date(r.reconciledAt).toISOString()
+            };
+        }
+        function rowToReconciliation(r) {
+            return {
+                id: r.id, date: r.recon_date, openingFloat: Number(r.opening_float), expectedFromSales: Number(r.expected_from_sales),
+                expectedTotal: Number(r.expected_total), counted: Number(r.counted), difference: Number(r.difference),
+                notes: r.notes || '', reconciledBy: r.reconciled_by, reconciledAt: new Date(r.reconciled_at).getTime()
+            };
+        }
+        function auditToRow(a) {
+            return { id: String(a.id), log_timestamp: new Date(a.timestamp).toISOString(), app_user: a.user, action: a.action, details: a.details || null };
+        }
+        function rowToAudit(r) {
+            return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '' };
+        }
 
-        // Push every locally-known product/sale to Supabase. Uses upsert so this
-        // is safe to call repeatedly — it never duplicates rows.
+        // Push every locally-known row to Supabase. Uses upsert throughout, so this
+        // is always safe to call repeatedly — it never duplicates rows. Tables are
+        // pushed in parallel since they don't depend on each other.
         async function pushLocalChangesToSupabase() {
             if (!supabaseClient || supabaseSyncInFlight) return;
             supabaseSyncInFlight = true;
             try {
-                if (DB.products.length) {
-                    await supabaseClient.from('products').upsert(DB.products.map(productToRow));
-                }
-                if (DB.sales.length) {
-                    await supabaseClient.from('sales').upsert(DB.sales.map(saleToRow));
-                }
+                const tasks = [];
+                if (DB.products.length) tasks.push(supabaseClient.from('products').upsert(DB.products.map(productToRow)));
+                if (DB.sales.length) tasks.push(supabaseClient.from('sales').upsert(DB.sales.map(saleToRow)));
+                if (DB.users.length) tasks.push(supabaseClient.from('app_users').upsert(DB.users.map(userToRow)));
+                if (DB.purchases.length) tasks.push(supabaseClient.from('purchases').upsert(DB.purchases.map(purchaseToRow)));
+                if (DB.trash.length) tasks.push(supabaseClient.from('trash').upsert(DB.trash.map(trashToRow)));
+                if (DB.resetRequests.length) tasks.push(supabaseClient.from('reset_requests').upsert(DB.resetRequests.map(resetRequestToRow)));
+                if (DB.heldSales.length) tasks.push(supabaseClient.from('held_sales').upsert(DB.heldSales.map(heldSaleToRow)));
+                if (DB.reconciliations.length) tasks.push(supabaseClient.from('reconciliations').upsert(DB.reconciliations.map(reconciliationToRow), { onConflict: 'recon_date' }));
+                if (DB.auditLog.length) tasks.push(supabaseClient.from('audit_log').upsert(DB.auditLog.map(auditToRow)));
+                tasks.push(supabaseClient.from('app_settings').upsert({ id: 1, settings: DB.settings }));
+
+                const results = await Promise.all(tasks);
+                const firstError = results.find(r => r.error);
+                if (firstError) throw firstError.error;
+
                 updateSyncStatusUI('synced');
             } catch (e) {
                 console.error('Supabase sync failed', e);
@@ -1991,25 +2073,50 @@
             }
         }
 
-        // Pull the current state of shared tables from Supabase into the
+        // Pull the current state of every shared table from Supabase into the
         // in-memory DB object. Called once on startup after connecting.
         async function pullAllFromSupabase() {
             if (!supabaseClient) return;
-            const { data: productRows, error: prodErr } = await supabaseClient.from('products').select('*');
-            if (prodErr) throw prodErr;
-            if (productRows && productRows.length) {
-                DB.products = productRows.map(rowToProduct);
-            }
 
-            const { data: saleRows, error: saleErr } = await supabaseClient.from('sales').select('*').order('sale_date', { ascending: true });
-            if (saleErr) throw saleErr;
-            if (saleRows) {
-                DB.sales = saleRows.map(rowToSale);
+            const [
+                productsRes, salesRes, usersRes, purchasesRes, trashRes,
+                resetReqRes, heldRes, reconRes, auditRes, settingsRes
+            ] = await Promise.all([
+                supabaseClient.from('products').select('*'),
+                supabaseClient.from('sales').select('*').order('sale_date', { ascending: true }),
+                supabaseClient.from('app_users').select('*'),
+                supabaseClient.from('purchases').select('*').order('purchase_date', { ascending: true }),
+                supabaseClient.from('trash').select('*'),
+                supabaseClient.from('reset_requests').select('*'),
+                supabaseClient.from('held_sales').select('*'),
+                supabaseClient.from('reconciliations').select('*'),
+                supabaseClient.from('audit_log').select('*').order('log_timestamp', { ascending: true }),
+                supabaseClient.from('app_settings').select('*').eq('id', 1).maybeSingle()
+            ]);
+
+            const firstError = [productsRes, salesRes, usersRes, purchasesRes, trashRes, resetReqRes, heldRes, reconRes, auditRes, settingsRes]
+                .find(r => r.error);
+            if (firstError) throw firstError.error;
+
+            if (productsRes.data?.length) DB.products = productsRes.data.map(rowToProduct);
+            if (salesRes.data) DB.sales = salesRes.data.map(rowToSale);
+            if (usersRes.data?.length) DB.users = usersRes.data.map(rowToUser);
+            if (purchasesRes.data) DB.purchases = purchasesRes.data.map(rowToPurchase);
+            if (trashRes.data) DB.trash = trashRes.data.map(rowToTrash);
+            if (resetReqRes.data) DB.resetRequests = resetReqRes.data.map(rowToResetRequest);
+            if (heldRes.data) DB.heldSales = heldRes.data.map(rowToHeldSale);
+            if (reconRes.data) DB.reconciliations = reconRes.data.map(rowToReconciliation);
+            if (auditRes.data) DB.auditLog = auditRes.data.map(rowToAudit);
+            if (settingsRes.data?.settings && Object.keys(settingsRes.data.settings).length) {
+                DB.settings = Object.assign({}, DB.settings, settingsRes.data.settings);
             }
         }
 
-        // Subscribe to realtime changes so other counters' actions show up
-        // here live, without needing a manual refresh.
+        // Subscribe to realtime changes so other counters' actions show up here
+        // live, without needing a manual refresh. Covers every table that matters
+        // for cross-counter visibility — products and sales most urgently (stock
+        // and revenue), but also held sales, trash, and reset requests since those
+        // are exactly the things that look broken if only visible on one counter.
         function subscribeToSupabaseRealtime() {
             if (!supabaseClient) return;
 
@@ -2037,13 +2144,79 @@
                         if (idx >= 0) DB.sales[idx] = updated;
                         else DB.sales.push(updated);
                     }
-                    if (typeof loadReports === 'function' && document.getElementById('reports')?.classList.contains('active')) {
-                        loadReports();
+                    refreshReportsIfVisible();
+                })
+                .subscribe();
+
+            const usersChannel = supabaseClient.channel('users-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'app_users' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.users = DB.users.filter(u => u.id !== payload.old.id);
+                    } else {
+                        const updated = rowToUser(payload.new);
+                        const idx = DB.users.findIndex(u => u.id === updated.id);
+                        if (idx >= 0) DB.users[idx] = updated;
+                        else DB.users.push(updated);
+                    }
+                    if (typeof loadUsersList === 'function' && document.getElementById('admin')?.classList.contains('active')) {
+                        loadUsersList();
                     }
                 })
                 .subscribe();
 
-            supabaseRealtimeChannels.push(productsChannel, salesChannel);
+            const heldChannel = supabaseClient.channel('held-sales-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'held_sales' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.heldSales = DB.heldSales.filter(h => String(h.id) !== String(payload.old.id));
+                    } else {
+                        const updated = rowToHeldSale(payload.new);
+                        const idx = DB.heldSales.findIndex(h => String(h.id) === String(updated.id));
+                        if (idx >= 0) DB.heldSales[idx] = updated;
+                        else DB.heldSales.push(updated);
+                    }
+                    updateHeldSalesBadge();
+                    if (document.getElementById('heldSalesModal')?.classList.contains('active')) {
+                        loadHeldSalesList();
+                    }
+                })
+                .subscribe();
+
+            const trashChannel = supabaseClient.channel('trash-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'trash' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.trash = DB.trash.filter(t => String(t.id) !== String(payload.old.id));
+                    } else {
+                        const updated = rowToTrash(payload.new);
+                        const idx = DB.trash.findIndex(t => String(t.id) === String(updated.id));
+                        if (idx >= 0) DB.trash[idx] = updated;
+                        else DB.trash.push(updated);
+                    }
+                    if (typeof loadTrashBin === 'function' && document.getElementById('admin')?.classList.contains('active')) {
+                        loadTrashBin();
+                    }
+                })
+                .subscribe();
+
+            const resetReqChannel = supabaseClient.channel('reset-requests-changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'reset_requests' }, (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        DB.resetRequests = DB.resetRequests.filter(r => String(r.id) !== String(payload.old.id));
+                    } else {
+                        const updated = rowToResetRequest(payload.new);
+                        const idx = DB.resetRequests.findIndex(r => String(r.id) === String(updated.id));
+                        if (idx >= 0) DB.resetRequests[idx] = updated;
+                        else DB.resetRequests.push(updated);
+                    }
+                    if (typeof loadResetRequests === 'function' && document.getElementById('admin')?.classList.contains('active')) {
+                        loadResetRequests();
+                    }
+                })
+                .subscribe();
+
+            supabaseRealtimeChannels.push(
+                productsChannel, salesChannel, usersChannel,
+                heldChannel, trashChannel, resetReqChannel
+            );
         }
 
         // Re-render whichever product views are currently visible, so a stock
@@ -2052,6 +2225,12 @@
             if (typeof loadProducts === 'function') loadProducts();
             if (typeof loadProductsTable === 'function') loadProductsTable();
             if (typeof checkLowStock === 'function') checkLowStock();
+        }
+
+        function refreshReportsIfVisible() {
+            if (typeof loadReports === 'function' && document.getElementById('reports')?.classList.contains('active')) {
+                loadReports();
+            }
         }
 
         function updateSyncStatusUI(state) {
@@ -2080,6 +2259,7 @@
                 supabaseConnected = true;
                 updateSyncStatusUI('synced');
                 refreshVisibleProductViews();
+                updateHeldSalesBadge();
                 if (typeof loadReports === 'function') loadReports();
             } catch (e) {
                 console.error('Could not connect to Supabase, continuing with local data only', e);
