@@ -910,6 +910,7 @@
                 <h1><i class="fas fa-store" id="loginLogoIcon"></i> <span id="loginTitleText">POS System</span></h1>
                 <p id="loginSubtitle">Enterprise Grocery Management</p>
             </div>
+            <div id="loginSyncStatus" style="text-align:center; font-size:11px; color:#999; margin-bottom:8px;"></div>
             <div id="errorMsg" class="error-msg"></div>
             <form onsubmit="handleLogin(event)">
                 <div class="form-group">
@@ -920,7 +921,7 @@
                     <label>Password</label>
                     <input type="password" id="loginPass" placeholder="Enter password" required>
                 </div>
-                <button type="submit" class="btn-login">Login</button>
+                <button type="submit" class="btn-login" id="loginSubmitBtn">Login</button>
             </form>
             <div style="text-align:center; margin-top:12px;">
                 <a href="#" onclick="openRecoveryModal(); return false;" style="font-size:12px; color:#185FA5; text-decoration:none;">Forgot password?</a>
@@ -1848,6 +1849,25 @@
             }
         };
 
+        // Any user who already holds the "admin" permission should always have every
+        // permission that currently exists — otherwise an admin account saved before a
+        // new permission was introduced would be missing it forever. Also transparently
+        // migrates any legacy plain-text password to hashed form. Used for both the
+        // localStorage-sourced user list and any list pulled fresh from Supabase.
+        function normalizeUsers(rawUsers) {
+            const allPermKeys = Object.keys(ALL_PERMISSIONS);
+            return (rawUsers || []).map(u => {
+                let next = u;
+                if (next.permissions && next.permissions.includes('admin')) {
+                    next = Object.assign({}, next, { permissions: allPermKeys.slice() });
+                }
+                if (next.password && !isHashedPassword(next.password)) {
+                    next = Object.assign({}, next, { password: hashPassword(next.password) });
+                }
+                return next;
+            });
+        }
+
         function loadDB() {
             try {
                 const raw = localStorage.getItem(STORAGE_KEY);
@@ -1856,22 +1876,7 @@
                     const products = (saved.products || DEFAULT_DB.products).map(p =>
                         Object.assign({ unit: 'pcs', sellMode: 'loose', costPrice: 0 }, p)
                     );
-
-                    // Any saved user who already holds the "admin" permission should always
-                    // have every permission that currently exists — otherwise an admin account
-                    // saved before a new permission was introduced would be missing it forever.
-                    // Also transparently migrate any legacy plain-text password to hashed form.
-                    const allPermKeys = Object.keys(ALL_PERMISSIONS);
-                    const users = (saved.users || DEFAULT_DB.users).map(u => {
-                        let next = u;
-                        if (next.permissions && next.permissions.includes('admin')) {
-                            next = Object.assign({}, next, { permissions: allPermKeys.slice() });
-                        }
-                        if (next.password && !isHashedPassword(next.password)) {
-                            next = Object.assign({}, next, { password: hashPassword(next.password) });
-                        }
-                        return next;
-                    });
+                    const users = normalizeUsers(saved.users || DEFAULT_DB.users);
 
                     // Merge saved data over defaults so new fields added in updates still exist
                     return {
@@ -1978,6 +1983,39 @@
         function rowToUser(r) {
             return { id: r.id, name: r.name, password: r.password_hash, role: r.role, permissions: r.permissions };
         }
+
+        // Pulls just the user list from Supabase, before anyone has logged in.
+        // Without this, a brand-new user created on Counter 1 couldn't log in on
+        // Counter 2 the first time, since Counter 2's local copy of DB.users
+        // (from its own localStorage) wouldn't know that user exists yet — login
+        // is checked synchronously against DB.users the moment Login is clicked,
+        // and the regular full sync only happens AFTER a successful login.
+        async function pullUsersForLogin() {
+            const submitBtn = document.getElementById('loginSubmitBtn');
+            if (!isSupabaseConfigured() || !supabaseClient) return;
+
+            const statusEl = document.getElementById('loginSyncStatus');
+            if (statusEl) statusEl.textContent = 'Checking for latest user accounts...';
+            if (submitBtn) submitBtn.disabled = true;
+
+            try {
+                const { data, error } = await supabaseClient.from('app_users').select('*');
+                if (error) throw error;
+                if (data && data.length) {
+                    DB.users = normalizeUsers(data.map(rowToUser));
+                    saveDB();
+                }
+                if (statusEl) statusEl.textContent = '';
+            } catch (e) {
+                console.error('Could not refresh user list before login, using local accounts', e);
+                if (statusEl) statusEl.textContent = '⚠ Could not reach shared accounts — using local accounts only';
+            } finally {
+                // Always re-enable, even on failure — a locked Login button with no
+                // way through would be worse than logging in against stale data.
+                if (submitBtn) submitBtn.disabled = false;
+            }
+        }
+
         function purchaseToRow(p) {
             return {
                 id: p.id, purchase_date: new Date(p.id).toISOString(), product_id: p.productId,
@@ -2771,7 +2809,7 @@
             return DB.users.filter(u => u.id !== excludingUserId && u.permissions.includes('admin')).length;
         }
 
-        function deleteUser(userId) {
+        async function deleteUser(userId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const target = DB.users.find(u => u.id === userId);
             if (target && target.permissions.includes('admin') && countAdmins(userId) === 0) {
@@ -2779,6 +2817,24 @@
                 return;
             }
             if (!confirm(`Remove user "${userId}"? This cannot be undone.`)) return;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('delete_user_safe', {
+                        p_caller_user_id: DB.currentUser.id,
+                        p_target_user_id: userId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side user delete failed, applying locally only', e);
+                    alert('Could not reach shared accounts — deleting locally only. Other counters may still see this user until they reconnect.');
+                }
+            }
+
             DB.users = DB.users.filter(u => u.id !== userId);
             if (permEditingUserId === userId) {
                 permEditingUserId = null;
@@ -2813,7 +2869,7 @@
             `).join('') + (isLastAdmin ? '<p style="margin-top:10px; font-size:12px; color:#999;">This is the last remaining admin account, so its own Admin access can\'t be revoked — that would lock everyone out with no way back in. Every other permission is fully editable. Grant another user Admin access first if you want to change this.</p>' : '');
         }
 
-        function togglePermission(userId, perm, enabled) {
+        async function togglePermission(userId, perm, enabled) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const user = DB.users.find(u => u.id === userId);
             if (!user) return;
@@ -2822,6 +2878,26 @@
                 alert('Cannot remove Admin access from the last remaining admin. Grant another user Admin access first.');
                 openPermEditor(userId); // re-render so the checkbox snaps back to checked
                 return;
+            }
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('set_user_permission', {
+                        p_caller_user_id: DB.currentUser.id,
+                        p_target_user_id: userId,
+                        p_permission: perm,
+                        p_grant: enabled
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Permission change was rejected by the server.');
+                        openPermEditor(userId); // re-render so the checkbox snaps back
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side permission change failed, applying locally only', e);
+                    alert('Could not reach shared accounts — changing permission locally only. Other counters may not see this until they reconnect.');
+                }
             }
 
             if (enabled && !user.permissions.includes(perm)) {
@@ -3243,7 +3319,7 @@
             editingProductId = null;
         }
 
-        function editStock(productId) {
+        async function editStock(productId) {
             if (!hasPerm('edit_stock')) {
                 alert('You don\'t have permission to edit stock');
                 return;
@@ -3254,7 +3330,28 @@
             const val = parseFloat(newStock);
             if (isNaN(val) || val < 0) { alert('Enter a valid stock number'); return; }
             const oldStock = product.stock;
-            product.stock = Math.round(val * 1000) / 1000;
+            const roundedVal = Math.round(val * 1000) / 1000;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('update_stock', {
+                        p_user_id: DB.currentUser.id,
+                        p_product_id: productId,
+                        p_new_stock: roundedVal,
+                        p_reason: 'manual_correction'
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Stock update was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side stock update failed, applying locally only', e);
+                    alert('Could not reach shared inventory — updating stock locally only. This may need manual reconciliation with other counters.');
+                }
+            }
+
+            product.stock = roundedVal;
             loadProducts();
             loadProductsTable();
             loadReports();
@@ -3311,7 +3408,7 @@
             preview.innerHTML = `<strong>${formatQty(qty, product.unit)} ${product.unit}</strong> @ ৳${cost.toFixed(2)} = <strong>Total: ৳${totalCost.toFixed(2)}</strong><br>New stock level: ${formatQty(newStockLevel, product.unit)} ${product.unit}`;
         }
 
-        function confirmRestock() {
+        async function confirmRestock() {
             if (!hasPerm('restock_purchase')) {
                 alert('You don\'t have permission to restock products');
                 return;
@@ -3336,8 +3433,28 @@
             const roundedQty = Math.round(qty * 1000) / 1000;
             const totalCost = roundedQty * cost;
             const oldStock = product.stock;
+            const newStock = Math.round((product.stock + roundedQty) * 1000) / 1000;
 
-            product.stock = Math.round((product.stock + roundedQty) * 1000) / 1000;
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('update_stock', {
+                        p_user_id: DB.currentUser.id,
+                        p_product_id: product.id,
+                        p_new_stock: newStock,
+                        p_reason: 'restock'
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Restock was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side restock failed, applying locally only', e);
+                    alert('Could not reach shared inventory — restocking locally only. This may need manual reconciliation with other counters.');
+                }
+            }
+
+            product.stock = newStock;
             product.costPrice = cost; // update to most recent cost price
 
             DB.purchases.push({
@@ -3371,29 +3488,51 @@
             DB.trash = DB.trash.filter(t => t.deletedAt >= cutoff);
         }
 
-        function deleteProduct(idx) {
+        async function deleteProduct(idx) {
             if (!hasPerm('delete_product')) {
                 alert('Permission denied');
                 return;
             }
             const product = DB.products[idx];
-            if (confirm(`Delete "${product.name}"? It will be moved to Trash and can be restored within ${TRASH_RETENTION_DAYS} days from Admin > Trash Bin.`)) {
-                DB.products.splice(idx, 1);
-                DB.trash.push({
-                    id: Date.now() + Math.random(),
-                    type: 'product',
-                    deletedAt: Date.now(),
-                    deletedBy: DB.currentUser ? DB.currentUser.id : 'system',
-                    data: product
-                });
-                pruneTrash();
-                loadProducts();
-                loadProductsTable();
-                loadBarcodeList();
-                checkLowStock();
-                logAudit('product_deleted', `Deleted "${product.name}" (barcode ${product.barcode}) — moved to trash`);
-                saveDB();
+            if (!confirm(`Delete "${product.name}"? It will be moved to Trash and can be restored within ${TRASH_RETENTION_DAYS} days from Admin > Trash Bin.`)) {
+                return;
             }
+
+            const trashId = String(Date.now() + Math.random());
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('delete_product_safe', {
+                        p_user_id: DB.currentUser.id,
+                        p_product_id: product.id,
+                        p_trash_id: trashId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side product delete failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only. This may need manual reconciliation with other counters.');
+                }
+            }
+
+            DB.products.splice(idx, 1);
+            DB.trash.push({
+                id: trashId,
+                type: 'product',
+                deletedAt: Date.now(),
+                deletedBy: DB.currentUser ? DB.currentUser.id : 'system',
+                data: product
+            });
+            pruneTrash();
+            loadProducts();
+            loadProductsTable();
+            loadBarcodeList();
+            checkLowStock();
+            logAudit('product_deleted', `Deleted "${product.name}" (barcode ${product.barcode}) — moved to trash`);
+            saveDB();
         }
 
         // ===== BARCODE LABEL GENERATION =====
@@ -4073,6 +4212,7 @@
 
                 try {
                     const { data, error } = await supabaseClient.rpc('process_sale', {
+                        p_user_id: DB.currentUser.id,
                         p_sale_id: sale.id,
                         p_invoice_no: sale.invoiceNo,
                         p_items: cart.map(i => ({ id: i.id, quantity: i.quantity })),
@@ -4492,16 +4632,37 @@
             openInvoicePreview(sale);
         }
 
-        function deleteSale(saleId) {
+        async function deleteSale(saleId) {
             if (!hasPerm('delete_sales')) {
                 alert('Permission denied');
                 return;
             }
             const sale = DB.sales.find(s => s.id === saleId);
             if (!confirm(`Delete sale ${sale ? sale.invoiceNo : ''}? It will be moved to Trash and can be restored within ${TRASH_RETENTION_DAYS} days from Admin > Trash Bin.`)) return;
+
+            const trashId = String(Date.now() + Math.random());
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('delete_sale_safe', {
+                        p_user_id: DB.currentUser.id,
+                        p_sale_id: saleId,
+                        p_trash_id: trashId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side sale delete failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only. This may need manual reconciliation with other counters.');
+                }
+            }
+
             DB.sales = DB.sales.filter(s => s.id !== saleId);
             DB.trash.push({
-                id: Date.now() + Math.random(),
+                id: trashId,
                 type: 'sale',
                 deletedAt: Date.now(),
                 deletedBy: DB.currentUser ? DB.currentUser.id : 'system',
@@ -4597,7 +4758,11 @@
                 : `Select quantities above to calculate refund, or use the cash-only adjustment.`;
         }
 
-        function confirmReturn() {
+        async function confirmReturn() {
+            if (!hasPerm('process_refund')) {
+                alert('You don\'t have permission to process refunds');
+                return;
+            }
             const sale = DB.sales.find(s => s.id === returnEditingSaleId);
             if (!sale) return;
 
@@ -4610,8 +4775,30 @@
                     alert(`Enter a valid amount up to ৳${remaining.toFixed(2)}`);
                     return;
                 }
+                const newStatus = (sale.refundedAmount || 0) + amount >= sale.amount ? 'refunded' : 'partial_refund';
+
+                if (supabaseConnected) {
+                    try {
+                        const { data, error } = await supabaseClient.rpc('process_refund_db', {
+                            p_user_id: DB.currentUser.id,
+                            p_sale_id: sale.id,
+                            p_refund_amount: amount,
+                            p_restore_items: [],
+                            p_new_status: newStatus
+                        });
+                        if (error) throw error;
+                        if (!data || !data.success) {
+                            alert(data?.error || 'Refund was rejected by the server.');
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Server-side refund failed, applying locally only', e);
+                        alert('Could not reach shared inventory — processing refund locally only. This may need manual reconciliation with other counters.');
+                    }
+                }
+
                 sale.refundedAmount = (sale.refundedAmount || 0) + amount;
-                sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
+                sale.status = newStatus;
 
                 loadReports();
                 logAudit('refund_processed', `${sale.invoiceNo}: cash-only refund ৳${amount.toFixed(2)} (no stock change)`);
@@ -4624,6 +4811,7 @@
             let refundTotal = 0;
             let totalQty = 0;
             const returnedDetails = [];
+            const restoreItems = [];
 
             // First pass: validate every requested quantity before changing any state
             const requestedQtys = sale.items.map((item, idx) => {
@@ -4641,19 +4829,12 @@
                 }
             }
 
-            // Second pass: all quantities valid, now apply the changes
             sale.items.forEach((item, idx) => {
                 const qty = requestedQtys[idx];
                 if (qty > 0) {
-                    const unit = item.unit || 'pcs';
-                    item.returnedQty = Math.round(((item.returnedQty || 0) + qty) * 1000) / 1000;
                     refundTotal += qty * item.price;
                     totalQty += qty;
-                    returnedDetails.push(`${item.name} x${formatQty(qty, unit)}${unit}`);
-
-                    // Restore stock for the physically returned quantity
-                    const product = DB.products.find(p => p.id === item.id) || DB.products.find(p => p.name === item.name);
-                    if (product) product.stock = Math.round((product.stock + qty) * 1000) / 1000;
+                    if (item.id != null) restoreItems.push({ id: item.id, quantity: qty });
                 }
             });
 
@@ -4662,8 +4843,57 @@
                 return;
             }
 
+            const newStatus = (sale.refundedAmount || 0) + refundTotal >= sale.amount ? 'refunded' : 'partial_refund';
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('process_refund_db', {
+                        p_user_id: DB.currentUser.id,
+                        p_sale_id: sale.id,
+                        p_refund_amount: refundTotal,
+                        p_restore_items: restoreItems,
+                        p_new_status: newStatus
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Refund was rejected by the server.');
+                        return;
+                    }
+                    // Database is now the source of truth for the restored stock —
+                    // pull fresh numbers down rather than guessing locally.
+                    await pullAllFromSupabase();
+                } catch (e) {
+                    console.error('Server-side refund failed, applying locally only', e);
+                    alert('Could not reach shared inventory — processing refund locally only. This may need manual reconciliation with other counters.');
+                    sale.items.forEach((item, idx) => {
+                        const qty = requestedQtys[idx];
+                        if (qty > 0) {
+                            const product = DB.products.find(p => p.id === item.id) || DB.products.find(p => p.name === item.name);
+                            if (product) product.stock = Math.round((product.stock + qty) * 1000) / 1000;
+                        }
+                    });
+                }
+            } else {
+                sale.items.forEach((item, idx) => {
+                    const qty = requestedQtys[idx];
+                    if (qty > 0) {
+                        const product = DB.products.find(p => p.id === item.id) || DB.products.find(p => p.name === item.name);
+                        if (product) product.stock = Math.round((product.stock + qty) * 1000) / 1000;
+                    }
+                });
+            }
+
+            sale.items.forEach((item, idx) => {
+                const qty = requestedQtys[idx];
+                if (qty > 0) {
+                    const unit = item.unit || 'pcs';
+                    item.returnedQty = Math.round(((item.returnedQty || 0) + qty) * 1000) / 1000;
+                    returnedDetails.push(`${item.name} x${formatQty(qty, unit)}${unit}`);
+                }
+            });
+
             sale.refundedAmount = (sale.refundedAmount || 0) + refundTotal;
-            sale.status = sale.refundedAmount >= sale.amount ? 'refunded' : 'partial_refund';
+            sale.status = newStatus;
 
             loadReports();
             loadProducts();
@@ -5152,6 +5382,10 @@
 
         // Ensure login page reflects current branding settings immediately on load
         renderBranding();
+        // Refresh the user list from Supabase (if configured) before anyone tries
+        // to log in, so a newly created account works on its very first login
+        // attempt at this device.
+        pullUsersForLogin();
     </script>
 </body>
 </html>
