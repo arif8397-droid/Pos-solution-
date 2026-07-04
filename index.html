@@ -1439,6 +1439,9 @@
                             <button type="button" class="btn-add-product" onclick="migrateLocalDataToSupabase()">
                                 <i class="fas fa-upload"></i> Migrate All Local Data to Supabase
                             </button>
+                            <button type="button" class="btn-add-product" style="margin-top:8px; background:#555;" onclick="debugSessionTest()">
+                                <i class="fas fa-bug"></i> TEMP: Test Session Creation
+                            </button>
                         </div>
 
                         <!-- Low Stock Settings -->
@@ -2538,6 +2541,51 @@
                 console.warn('Could not establish a server session', e);
                 currentSessionToken = null;
             }
+        }
+
+        // TEMPORARY DIAGNOSTIC — remove once the session issue is fixed.
+        // Calls create_session directly and shows exactly what comes back,
+        // plus the current in-memory session token state, without needing
+        // to fight the browser console's paste protections.
+        async function debugSessionTest() {
+            if (!supabaseClient) { alert('supabaseClient is not initialized at all.'); return; }
+            if (!DB.currentUser) { alert('DB.currentUser is null — not logged in?'); return; }
+
+            let report = `Testing create_session for user: ${DB.currentUser.id}\n`;
+            report += `Local password hash: ${DB.currentUser.password}\n\n`;
+
+            try {
+                const { data, error } = await supabaseClient.rpc('create_session', {
+                    p_user_id: DB.currentUser.id,
+                    p_password_hash: DB.currentUser.password
+                });
+
+                if (error) {
+                    report += `THREW AN ERROR (function/table problem):\n${JSON.stringify(error, null, 2)}`;
+                } else {
+                    report += `RPC RESPONSE:\n${JSON.stringify(data, null, 2)}`;
+                }
+            } catch (e) {
+                report += `EXCEPTION: ${e.message || e}`;
+            }
+
+            report += `\n\nCurrent currentSessionToken variable: ${currentSessionToken}`;
+
+            // Also check what Supabase thinks this user's row looks like right now.
+            try {
+                const { data: userRow, error: userErr } = await supabaseClient
+                    .from('app_users')
+                    .select('id, permissions, password_hash')
+                    .eq('id', DB.currentUser.id)
+                    .maybeSingle();
+                report += `\n\nSupabase app_users row for "${DB.currentUser.id}":\n${JSON.stringify(userRow, null, 2)}`;
+                if (userErr) report += `\n(error reading row: ${JSON.stringify(userErr)})`;
+            } catch (e) {
+                report += `\n\nCould not read app_users row: ${e.message || e}`;
+            }
+
+            console.log(report);
+            alert(report);
         }
 
         const AUDIT_LOG_RETENTION_DAYS = 365;
