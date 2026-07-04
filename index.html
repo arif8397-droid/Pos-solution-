@@ -1439,9 +1439,6 @@
                             <button type="button" class="btn-add-product" onclick="migrateLocalDataToSupabase()">
                                 <i class="fas fa-upload"></i> Migrate All Local Data to Supabase
                             </button>
-                            <button type="button" class="btn-add-product" style="margin-top:8px; background:#555;" onclick="debugSessionTest()">
-                                <i class="fas fa-bug"></i> TEMP: Test Session Creation
-                            </button>
                         </div>
 
                         <!-- Low Stock Settings -->
@@ -1763,6 +1760,12 @@
         // create_session/resolve_session in supabase_permissions_part4_sessions.sql.
         let currentSessionToken = null;
         let pendingPasswordUpgradeUserId = null;
+        // The user's OLD (pre-upgrade) hash — this is what Supabase still has on
+        // file, so it's what we must authenticate the FIRST session with. Only
+        // after that session exists can self_update_password_hash push the new
+        // hash up; authenticating with the already-upgraded local hash would
+        // never match Supabase's still-old copy and would permanently fail.
+        let pendingPasswordUpgradeOldHash = null;
 
         function isSupabaseConfigured() {
             return SUPABASE_URL && SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
@@ -2517,9 +2520,19 @@
         async function establishSupabaseSession() {
             if (!supabaseClient || !DB.currentUser) return;
             try {
+                // If a password-hash upgrade is pending for this user, Supabase
+                // still has the OLD hash on file — authenticate with that first.
+                // Sending the already-upgraded local hash here would never match
+                // and would permanently lock the session out (that was the bug).
+                const isPendingUpgrade = pendingPasswordUpgradeUserId === DB.currentUser.id
+                    && pendingPasswordUpgradeOldHash;
+                const hashForAuth = isPendingUpgrade
+                    ? pendingPasswordUpgradeOldHash
+                    : DB.currentUser.password;
+
                 const { data, error } = await supabaseClient.rpc('create_session', {
                     p_user_id: DB.currentUser.id,
-                    p_password_hash: DB.currentUser.password
+                    p_password_hash: hashForAuth
                 });
                 if (error || !data?.success) {
                     console.warn('Could not establish a server session — admin/staff actions requiring elevated permissions will be unavailable until this succeeds', error || data?.error);
@@ -2530,62 +2543,20 @@
 
                 // If this login just transparently upgraded an old password hash,
                 // push the new hash up now that we have a valid session to do it with.
-                if (pendingPasswordUpgradeUserId === DB.currentUser.id) {
+                if (isPendingUpgrade) {
                     const { error: upgradeError } = await supabaseClient.rpc('self_update_password_hash', {
                         p_session_token: currentSessionToken,
                         p_new_hash: DB.currentUser.password
                     });
-                    if (!upgradeError) pendingPasswordUpgradeUserId = null;
+                    if (!upgradeError) {
+                        pendingPasswordUpgradeUserId = null;
+                        pendingPasswordUpgradeOldHash = null;
+                    }
                 }
             } catch (e) {
                 console.warn('Could not establish a server session', e);
                 currentSessionToken = null;
             }
-        }
-
-        // TEMPORARY DIAGNOSTIC — remove once the session issue is fixed.
-        // Calls create_session directly and shows exactly what comes back,
-        // plus the current in-memory session token state, without needing
-        // to fight the browser console's paste protections.
-        async function debugSessionTest() {
-            if (!supabaseClient) { alert('supabaseClient is not initialized at all.'); return; }
-            if (!DB.currentUser) { alert('DB.currentUser is null — not logged in?'); return; }
-
-            let report = `Testing create_session for user: ${DB.currentUser.id}\n`;
-            report += `Local password hash: ${DB.currentUser.password}\n\n`;
-
-            try {
-                const { data, error } = await supabaseClient.rpc('create_session', {
-                    p_user_id: DB.currentUser.id,
-                    p_password_hash: DB.currentUser.password
-                });
-
-                if (error) {
-                    report += `THREW AN ERROR (function/table problem):\n${JSON.stringify(error, null, 2)}`;
-                } else {
-                    report += `RPC RESPONSE:\n${JSON.stringify(data, null, 2)}`;
-                }
-            } catch (e) {
-                report += `EXCEPTION: ${e.message || e}`;
-            }
-
-            report += `\n\nCurrent currentSessionToken variable: ${currentSessionToken}`;
-
-            // Also check what Supabase thinks this user's row looks like right now.
-            try {
-                const { data: userRow, error: userErr } = await supabaseClient
-                    .from('app_users')
-                    .select('id, permissions, password_hash')
-                    .eq('id', DB.currentUser.id)
-                    .maybeSingle();
-                report += `\n\nSupabase app_users row for "${DB.currentUser.id}":\n${JSON.stringify(userRow, null, 2)}`;
-                if (userErr) report += `\n(error reading row: ${JSON.stringify(userErr)})`;
-            } catch (e) {
-                report += `\n\nCould not read app_users row: ${e.message || e}`;
-            }
-
-            console.log(report);
-            alert(report);
         }
 
         const AUDIT_LOG_RETENTION_DAYS = 365;
@@ -2657,6 +2628,10 @@
                     // Correct password on an old-format hash — move it onto the
                     // stronger algorithm now, transparently. establishSupabaseSession()
                     // pushes this up to Supabase once a session is available.
+                    // Keep the OLD hash around: Supabase still has it on file, and
+                    // it's what the first create_session call must authenticate
+                    // with — sending the already-upgraded hash would never match.
+                    pendingPasswordUpgradeOldHash = user.password;
                     user.password = hashPassword(password);
                     pendingPasswordUpgradeUserId = user.id;
                 }
