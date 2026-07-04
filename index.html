@@ -1429,6 +1429,18 @@
                             </div>
                         </div>
 
+                        <!-- Supabase Data Migration -->
+                        <div class="admin-card" style="grid-column: 1 / -1;">
+                            <h4><i class="fas fa-database"></i> Supabase Migration</h4>
+                            <p style="font-size:12px; color:#666; margin-bottom:10px;">
+                                First time connecting to Supabase? Use this to push all your existing local data (products, sales, users, purchases, audit log, etc.) into your Supabase project. Safe to run multiple times — it never creates duplicates.
+                            </p>
+                            <div id="migrationStatus" style="font-size:12px; color:#BA7517; margin-bottom:8px;"></div>
+                            <button type="button" class="btn-add-product" onclick="migrateLocalDataToSupabase()">
+                                <i class="fas fa-upload"></i> Migrate All Local Data to Supabase
+                            </button>
+                        </div>
+
                         <!-- Low Stock Settings -->
                         <div class="admin-card">
                             <h4><i class="fas fa-warehouse"></i> Low Stock Alert</h4>
@@ -1736,8 +1748,8 @@
         // only the anon/public key, which is designed to be safe in
         // client-side code.
         // ============================================================
-        const SUPABASE_URL = 'https://eyptcvydovfuvpmyezeh.supabase.co/';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5cHRjdnlkb3ZmdXZwbXllemVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzNDE1MDUsImV4cCI6MjA5NzkxNzUwNX0.RJjqOgz0n9LBrW6r3PpEzDa2DdbHP2jQB55KritZiXE';
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
         let supabaseClient = null;
         let supabaseConnected = false;
@@ -2079,24 +2091,34 @@
             return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '' };
         }
 
-        // Push every locally-known row to Supabase. Uses upsert throughout, so this
-        // is always safe to call repeatedly — it never duplicates rows. Tables are
-        // pushed in parallel since they don't depend on each other.
+        // Background incremental sync — only pushes tables that still allow direct
+        // writes from the anon key. Locked tables (products, sales, app_users, trash)
+        // are updated exclusively through their security-definer RPC functions, which
+        // already run as part of each user action. This function only handles the
+        // tables that don't have corresponding RPCs for every mutation yet, plus
+        // settings which routes through its own RPC.
         async function pushLocalChangesToSupabase() {
             if (!supabaseClient || supabaseSyncInFlight) return;
             supabaseSyncInFlight = true;
             try {
                 const tasks = [];
-                if (DB.products.length) tasks.push(supabaseClient.from('products').upsert(DB.products.map(productToRow)));
-                if (DB.sales.length) tasks.push(supabaseClient.from('sales').upsert(DB.sales.map(saleToRow)));
-                if (DB.users.length) tasks.push(supabaseClient.from('app_users').upsert(DB.users.map(userToRow)));
+
+                // These tables still accept direct writes (purchases, held_sales,
+                // reconciliations, audit_log, reset_requests keep their open policies
+                // for background upsert, now that every mutation also goes through an
+                // RPC — the upsert here keeps them in sync if a local-only action
+                // happened while Supabase was temporarily unreachable).
                 if (DB.purchases.length) tasks.push(supabaseClient.from('purchases').upsert(DB.purchases.map(purchaseToRow)));
-                if (DB.trash.length) tasks.push(supabaseClient.from('trash').upsert(DB.trash.map(trashToRow)));
                 if (DB.resetRequests.length) tasks.push(supabaseClient.from('reset_requests').upsert(DB.resetRequests.map(resetRequestToRow)));
-                if (DB.heldSales.length) tasks.push(supabaseClient.from('held_sales').upsert(DB.heldSales.map(heldSaleToRow)));
-                if (DB.reconciliations.length) tasks.push(supabaseClient.from('reconciliations').upsert(DB.reconciliations.map(reconciliationToRow), { onConflict: 'recon_date' }));
                 if (DB.auditLog.length) tasks.push(supabaseClient.from('audit_log').upsert(DB.auditLog.map(auditToRow)));
-                tasks.push(supabaseClient.from('app_settings').upsert({ id: 1, settings: DB.settings }));
+
+                // Settings route through its own RPC
+                tasks.push(
+                    supabaseClient.rpc('update_app_settings', {
+                        p_user_id: DB.currentUser ? DB.currentUser.id : 'system',
+                        p_settings: DB.settings
+                    })
+                );
 
                 const results = await Promise.all(tasks);
                 const firstError = results.find(r => r.error);
@@ -2108,6 +2130,64 @@
                 updateSyncStatusUI('error');
             } finally {
                 supabaseSyncInFlight = false;
+            }
+        }
+
+        // One-time migration: pushes all existing local data into a fresh Supabase
+        // project. Call this manually from the admin panel (button added below)
+        // after setting up Supabase for the first time. It uses security-definer
+        // RPCs for the locked tables. Safe to call multiple times (upsert everywhere).
+        async function migrateLocalDataToSupabase() {
+            if (!supabaseClient) { alert('Supabase is not connected. Check your URL and API key.'); return; }
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            if (!confirm('This will push all your local data (products, sales, users, etc.) into Supabase. This is safe to run multiple times — it will never create duplicates. Continue?')) return;
+
+            const statusEl = document.getElementById('migrationStatus');
+            const updateStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+
+            updateStatus('Migrating products...');
+            try {
+                for (const p of DB.products) {
+                    await supabaseClient.rpc('update_stock', {
+                        p_user_id: DB.currentUser.id,
+                        p_product_id: p.id,
+                        p_new_stock: p.stock,
+                        p_reason: 'migration',
+                        p_new_cost_price: p.costPrice || 0
+                    });
+                    // Also ensure the full product row exists via direct upsert
+                    // (update_stock only updates existing rows; we need insert too)
+                    await supabaseClient.from('products').upsert(productToRow(p));
+                }
+
+                updateStatus('Migrating users...');
+                for (const u of DB.users) {
+                    await supabaseClient.from('app_users').upsert(userToRow(u));
+                }
+
+                updateStatus('Migrating sales...');
+                for (const s of DB.sales) {
+                    await supabaseClient.from('sales').upsert(saleToRow(s));
+                }
+
+                updateStatus('Migrating purchases, trash, held sales, reconciliations...');
+                const tasks = [];
+                if (DB.purchases.length) tasks.push(supabaseClient.from('purchases').upsert(DB.purchases.map(purchaseToRow)));
+                if (DB.trash.length) tasks.push(supabaseClient.from('trash').upsert(DB.trash.map(trashToRow)));
+                if (DB.heldSales.length) tasks.push(supabaseClient.from('held_sales').upsert(DB.heldSales.map(heldSaleToRow)));
+                if (DB.reconciliations.length) tasks.push(supabaseClient.from('reconciliations').upsert(DB.reconciliations.map(reconciliationToRow), { onConflict: 'recon_date' }));
+                if (DB.auditLog.length) tasks.push(supabaseClient.from('audit_log').upsert(DB.auditLog.map(auditToRow)));
+                if (DB.resetRequests.length) tasks.push(supabaseClient.from('reset_requests').upsert(DB.resetRequests.map(resetRequestToRow)));
+                tasks.push(supabaseClient.rpc('update_app_settings', { p_user_id: DB.currentUser.id, p_settings: DB.settings }));
+                await Promise.all(tasks);
+
+                updateStatus('');
+                logAudit('data_migrated', `Full local data migration to Supabase completed by ${DB.currentUser.id}`);
+                alert('✓ Migration complete. All local data is now in Supabase.');
+            } catch (e) {
+                console.error('Migration failed', e);
+                updateStatus('⚠ Migration failed — see browser console for details.');
+                alert('Migration failed: ' + (e.message || e));
             }
         }
 
@@ -2310,16 +2390,35 @@
 
         function logAudit(action, details) {
             const now = Date.now();
+            const entryId = String(now + Math.random());
+            const userId = DB.currentUser ? DB.currentUser.id : 'system';
+
             DB.auditLog.push({
-                id: now + Math.random(),
+                id: entryId,
                 timestamp: now,
                 time: new Date(now).toLocaleString(),
-                user: DB.currentUser ? DB.currentUser.id : 'system',
+                user: userId,
                 action,
                 details
             });
             pruneAuditLog();
             saveDB();
+
+            // Fire-and-forget: every action in the app calls logAudit synchronously
+            // and doesn't expect a Promise back, so the actual write to Supabase
+            // happens in the background rather than making logAudit itself async.
+            if (supabaseConnected) {
+                supabaseClient.rpc('write_audit_log', {
+                    p_entry_id: entryId,
+                    p_user_id: userId,
+                    p_action: action,
+                    p_details: details || null
+                }).then(({ data, error }) => {
+                    if (error || !data?.success) {
+                        console.error('Audit log write to Supabase failed (kept locally)', error || data?.error);
+                    }
+                });
+            }
         }
 
         function pruneAuditLog() {
@@ -2704,7 +2803,7 @@
             DB.resetRequests = DB.resetRequests.filter(r => r.createdAt >= cutoff && !r.used);
         }
 
-        function requestResetCode() {
+        async function requestResetCode() {
             const errorBox = document.getElementById('recoveryRequestError');
             const successBox = document.getElementById('recoveryRequestSuccess');
             errorBox.style.display = 'none';
@@ -2724,12 +2823,33 @@
             }
 
             pruneExpiredResetRequests();
+            const requestId = String(Date.now() + Math.random());
+            const code = generateResetCode();
+
+            if (isSupabaseConfigured() && supabaseClient) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('request_password_reset', {
+                        p_request_id: requestId,
+                        p_user_id: userId,
+                        p_code: code
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        errorBox.textContent = data?.error || 'Could not request a code right now.';
+                        errorBox.style.display = 'block';
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side reset request failed, applying locally only', e);
+                    errorBox.textContent = '⚠ Could not reach shared accounts — this code will only work on this device.';
+                    errorBox.style.display = 'block';
+                }
+            }
 
             // Replace any existing pending request for this user with a fresh one
             DB.resetRequests = DB.resetRequests.filter(r => r.userId !== userId);
-            const code = generateResetCode();
             DB.resetRequests.push({
-                id: Date.now() + Math.random(),
+                id: requestId,
                 userId,
                 code,
                 createdAt: Date.now(),
@@ -2768,7 +2888,7 @@
             document.getElementById('recoveryModal').classList.remove('active');
         }
 
-        function performRecovery() {
+        async function performRecovery() {
             const errorBox = document.getElementById('recoveryError');
             errorBox.style.display = 'none';
 
@@ -2777,6 +2897,43 @@
             const userId = document.getElementById('recoveryUserId').value.trim();
             const enteredCode = document.getElementById('recoveryCode').value.trim().toUpperCase();
             const newPassword = document.getElementById('recoveryNewPassword').value;
+
+            if (!newPassword) {
+                errorBox.textContent = 'Enter a new password.';
+                errorBox.style.display = 'block';
+                return;
+            }
+
+            const newPasswordHash = hashPassword(newPassword);
+
+            if (isSupabaseConfigured() && supabaseClient) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('redeem_password_reset', {
+                        p_user_id: userId,
+                        p_code: enteredCode,
+                        p_new_password_hash: newPasswordHash
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        errorBox.textContent = data?.error || 'That code is invalid, already used, or has expired. Request a new one.';
+                        errorBox.style.display = 'block';
+                        return;
+                    }
+
+                    // Reflect the change locally too, so this device's own login
+                    // works immediately without waiting for a fresh pull.
+                    const localUser = DB.users.find(u => u.id === userId);
+                    if (localUser) localUser.password = newPasswordHash;
+                    DB.resetRequests = DB.resetRequests.filter(r => !(r.userId === userId && r.code === enteredCode));
+                    saveDB();
+                    closeRecoveryModal();
+                    alert(`✓ Password for "${userId}" has been reset. You can log in now with the new password.`);
+                    return;
+                } catch (e) {
+                    console.error('Server-side recovery failed, falling back to local-only check', e);
+                    // fall through to the local-only path below
+                }
+            }
 
             const request = DB.resetRequests.find(r => r.userId === userId && r.code === enteredCode && !r.used);
             if (!request) {
@@ -2791,13 +2948,8 @@
                 errorBox.style.display = 'block';
                 return;
             }
-            if (!newPassword) {
-                errorBox.textContent = 'Enter a new password.';
-                errorBox.style.display = 'block';
-                return;
-            }
 
-            user.password = hashPassword(newPassword);
+            user.password = newPasswordHash;
             request.used = true;
             logAudit('password_recovered', `Password for "${userId}" was reset using one-time code (no admin session)`);
             saveDB();
@@ -3435,18 +3587,41 @@
             const oldStock = product.stock;
             const newStock = Math.round((product.stock + roundedQty) * 1000) / 1000;
 
+            const purchaseId = Date.now();
+
             if (supabaseConnected) {
                 try {
                     const { data, error } = await supabaseClient.rpc('update_stock', {
                         p_user_id: DB.currentUser.id,
                         p_product_id: product.id,
                         p_new_stock: newStock,
-                        p_reason: 'restock'
+                        p_reason: 'restock',
+                        p_new_cost_price: cost
                     });
                     if (error) throw error;
                     if (!data || !data.success) {
                         alert(data?.error || 'Restock was rejected by the server.');
                         return;
+                    }
+
+                    const { data: purchaseData, error: purchaseError } = await supabaseClient.rpc('record_purchase', {
+                        p_user_id: DB.currentUser.id,
+                        p_purchase_id: purchaseId,
+                        p_product_id: product.id,
+                        p_product_name: product.name,
+                        p_quantity: roundedQty,
+                        p_unit: product.unit,
+                        p_cost_price: cost,
+                        p_total_cost: totalCost,
+                        p_supplier: supplier || null,
+                        p_notes: notes || null
+                    });
+                    if (purchaseError) throw purchaseError;
+                    if (!purchaseData || !purchaseData.success) {
+                        // Stock already updated successfully — don't block on the purchase
+                        // log failing, just let the person know it wasn't recorded centrally.
+                        console.error('Purchase record was rejected by the server:', purchaseData?.error);
+                        alert('Stock was updated, but the purchase record could not be saved centrally: ' + (purchaseData?.error || 'unknown error'));
                     }
                 } catch (e) {
                     console.error('Server-side restock failed, applying locally only', e);
@@ -3458,7 +3633,7 @@
             product.costPrice = cost; // update to most recent cost price
 
             DB.purchases.push({
-                id: Date.now(),
+                id: purchaseId,
                 date: new Date().toLocaleString(),
                 productId: product.id,
                 productName: product.name,
@@ -3991,7 +4166,7 @@
         }
 
         // ===== HOLD / PARK SALES =====
-        function holdCurrentSale() {
+        async function holdCurrentSale() {
             if (!hasPerm('pos')) { alert('POS access denied'); return; }
             if (cart.length === 0) {
                 alert('Cart is empty — nothing to hold.');
@@ -3999,17 +4174,46 @@
             }
 
             const note = prompt('Optional note to identify this held sale later (e.g. customer name):', '') || '';
+            const heldId = String(Date.now() + Math.random());
+            const cartSnapshot = JSON.parse(JSON.stringify(cart));
+            const discountInput = document.getElementById('discountInput').value;
+            const discountType = document.getElementById('discountType').value;
+            const paymentMethod = document.getElementById('paymentMethod').value;
+            const transactionId = document.getElementById('transactionIdInput').value;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('hold_sale', {
+                        p_user_id: DB.currentUser.id,
+                        p_held_id: heldId,
+                        p_note: note.trim(),
+                        p_cart: cartSnapshot,
+                        p_discount_input: discountInput,
+                        p_discount_type: discountType,
+                        p_payment_method: paymentMethod,
+                        p_transaction_id: transactionId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Hold was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side hold failed, applying locally only', e);
+                    alert('Could not reach shared inventory — holding locally only. This sale won\'t be visible on other counters.');
+                }
+            }
 
             DB.heldSales.push({
-                id: Date.now() + Math.random(),
+                id: heldId,
                 heldAt: Date.now(),
                 heldBy: DB.currentUser.id,
                 note: note.trim(),
-                cart: JSON.parse(JSON.stringify(cart)),
-                discountInput: document.getElementById('discountInput').value,
-                discountType: document.getElementById('discountType').value,
-                paymentMethod: document.getElementById('paymentMethod').value,
-                transactionId: document.getElementById('transactionIdInput').value
+                cart: cartSnapshot,
+                discountInput,
+                discountType,
+                paymentMethod,
+                transactionId
             });
             saveDB();
             logAudit('sale_held', `Held a cart with ${cart.length} item(s)${note ? ' — "' + note + '"' : ''}`);
@@ -4066,12 +4270,30 @@
             }).join('') || '<p style="color:#999; font-size:12px;">No held sales.</p>';
         }
 
-        function recallHeldSale(heldId) {
+        async function recallHeldSale(heldId) {
+            if (!hasPerm('pos')) { alert('POS access denied'); return; }
             const held = DB.heldSales.find(h => String(h.id) === String(heldId));
             if (!held) return;
 
             if (cart.length > 0 && !confirm('Your current cart is not empty. Recalling this held sale will replace it. Continue?')) {
                 return;
+            }
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('remove_held_sale', {
+                        p_user_id: DB.currentUser.id,
+                        p_held_id: String(heldId)
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Recall was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side recall failed, applying locally only', e);
+                    alert('Could not reach shared inventory — recalling locally only.');
+                }
             }
 
             cart = JSON.parse(JSON.stringify(held.cart));
@@ -4090,8 +4312,27 @@
             closeHeldSalesModal();
         }
 
-        function deleteHeldSale(heldId) {
+        async function deleteHeldSale(heldId) {
+            if (!hasPerm('pos')) { alert('POS access denied'); return; }
             if (!confirm('Delete this held sale permanently? It cannot be recovered.')) return;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('remove_held_sale', {
+                        p_user_id: DB.currentUser.id,
+                        p_held_id: String(heldId)
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side delete failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only.');
+                }
+            }
+
             DB.heldSales = DB.heldSales.filter(h => String(h.id) !== String(heldId));
             saveDB();
             loadHeldSalesList();
@@ -4979,14 +5220,31 @@
             }).join('') || '<p style="color:#999; font-size:12px;">No pending requests.</p>';
         }
 
-        function dismissResetRequest(requestId) {
+        async function dismissResetRequest(requestId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('dismiss_reset_request', {
+                        p_user_id: DB.currentUser.id,
+                        p_request_id: String(requestId)
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Dismiss was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side dismiss failed, applying locally only', e);
+                }
+            }
+
             DB.resetRequests = DB.resetRequests.filter(r => String(r.id) !== String(requestId));
             saveDB();
             loadResetRequests();
         }
 
-        function restoreFromTrash(trashId) {
+        async function restoreFromTrash(trashId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const entry = DB.trash.find(t => String(t.id) === String(trashId));
             if (!entry) return;
@@ -4997,13 +5255,37 @@
                     alert(`Cannot restore — barcode "${entry.data.barcode}" is already used by another product. Change that product's barcode first, or edit this item's barcode before restoring.`);
                     return;
                 }
-                DB.products.push(entry.data);
+            }
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('restore_from_trash', {
+                        p_user_id: DB.currentUser.id,
+                        p_trash_id: String(trashId)
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Restore was rejected by the server.');
+                        return;
+                    }
+                    await pullAllFromSupabase();
+                } catch (e) {
+                    console.error('Server-side restore failed, applying locally only', e);
+                    alert('Could not reach shared inventory — restoring locally only. This may need manual reconciliation with other counters.');
+                    if (entry.type === 'product') DB.products.push(entry.data);
+                    else if (entry.type === 'sale') DB.sales.push(entry.data);
+                }
+            } else {
+                if (entry.type === 'product') DB.products.push(entry.data);
+                else if (entry.type === 'sale') DB.sales.push(entry.data);
+            }
+
+            if (entry.type === 'product') {
                 loadProducts();
                 loadProductsTable();
                 loadBarcodeList();
                 checkLowStock();
             } else if (entry.type === 'sale') {
-                DB.sales.push(entry.data);
                 loadReports();
             }
 
@@ -5014,11 +5296,28 @@
             alert('✓ Restored successfully');
         }
 
-        function permanentlyDeleteFromTrash(trashId) {
+        async function permanentlyDeleteFromTrash(trashId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const entry = DB.trash.find(t => String(t.id) === String(trashId));
             if (!entry) return;
             if (!confirm('Permanently delete this item? This truly cannot be undone.')) return;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('purge_trash_entry', {
+                        p_user_id: DB.currentUser.id,
+                        p_trash_id: String(trashId)
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side purge failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only.');
+                }
+            }
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
@@ -5249,7 +5548,7 @@
             preview.innerHTML = html;
         }
 
-        function saveCashReconciliation() {
+        async function saveCashReconciliation() {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
 
             const dateStr = document.getElementById('reconcileDate').value;
@@ -5269,11 +5568,36 @@
             const expectedTotal = openingFloat + expectedFromSales;
             const difference = counted - expectedTotal;
             const notes = document.getElementById('reconcileNotes').value.trim();
+            const reconId = Date.now();
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('save_reconciliation', {
+                        p_user_id: DB.currentUser.id,
+                        p_recon_id: reconId,
+                        p_recon_date: dateStr,
+                        p_opening_float: openingFloat,
+                        p_expected_from_sales: expectedFromSales,
+                        p_expected_total: expectedTotal,
+                        p_counted: counted,
+                        p_difference: difference,
+                        p_notes: notes || null
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Reconciliation was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side reconciliation save failed, applying locally only', e);
+                    alert('Could not reach shared inventory — saving locally only.');
+                }
+            }
 
             // Replace any existing reconciliation already saved for this exact date
             DB.reconciliations = DB.reconciliations.filter(r => r.date !== dateStr);
             DB.reconciliations.push({
-                id: Date.now(),
+                id: reconId,
                 date: dateStr,
                 openingFloat,
                 expectedFromSales,
