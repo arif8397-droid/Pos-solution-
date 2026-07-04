@@ -2830,8 +2830,11 @@
 
             if (supabaseClient && currentSessionToken) {
                 // Best-effort — don't block logout on this, and don't care if it fails
-                // (the token also expires on its own server-side).
-                supabaseClient.rpc('end_session', { p_session_token: currentSessionToken }).catch(() => {});
+                // (the token also expires on its own server-side). Using .then(ok, fail)
+                // instead of .catch() here: supabase-js's rpc() builder is only a
+                // "thenable" until awaited/then()'d — it has no standalone .catch()
+                // method, so calling .catch() directly on it throws a TypeError.
+                supabaseClient.rpc('end_session', { p_session_token: currentSessionToken }).then(() => {}, () => {});
             }
             currentSessionToken = null;
 
