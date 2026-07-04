@@ -1911,6 +1911,23 @@
                 (value.startsWith(PASSWORD_HASH_PREFIX) || value.startsWith(LEGACY_HASH_PREFIX));
         }
 
+        // Escapes free-text fields (product/user/supplier names, notes, ids, etc.)
+        // before they're interpolated into innerHTML template strings. Without
+        // this, anyone able to enter a product name, user name, supplier, or
+        // note field could store an HTML/script payload that executes in
+        // whoever's browser later renders that list (a stored XSS path) —
+        // this app has several roles that can create/edit that kind of data,
+        // so every such field needs this before hitting innerHTML.
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         // Returns { valid, needsUpgrade } instead of a bare boolean so callers can
         // transparently re-hash and persist with the new algorithm the moment an
         // old-format account successfully logs in — no forced "reset your password"
@@ -2198,10 +2215,10 @@
             };
         }
         function auditToRow(a) {
-            return { id: String(a.id), log_timestamp: new Date(a.timestamp).toISOString(), app_user: a.user, action: a.action, details: a.details || null };
+            return { id: String(a.id), log_timestamp: new Date(a.timestamp).toISOString(), app_user: a.user, action: a.action, details: a.details || null, meta: a.meta || null };
         }
         function rowToAudit(r) {
-            return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '' };
+            return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '', meta: r.meta || null };
         }
 
         // Background incremental sync — only pushes tables that still allow direct
@@ -2606,10 +2623,37 @@
 
         const AUDIT_LOG_RETENTION_DAYS = 365;
 
+        // Lightweight context captured alongside every audit entry — not
+        // exhaustive tracking, just enough to answer "what role did this
+        // user hold at the time" (useful once permissions change later)
+        // and "roughly what device/browser did this come from" (useful
+        // for spotting an unexpected session, e.g. an admin action from
+        // an unfamiliar browser). No IP capture — the browser has no
+        // reliable way to know its own public IP without a third-party
+        // call, and this app doesn't proxy requests through its own server.
+        function getAuditMeta() {
+            const ua = navigator.userAgent || '';
+            const isMobile = /Mobi|Android|iPhone|iPad/i.test(ua);
+            let browser = 'Unknown';
+            if (ua.includes('Edg/')) browser = 'Edge';
+            else if (ua.includes('Chrome/') && !ua.includes('Chromium')) browser = 'Chrome';
+            else if (ua.includes('Firefox/')) browser = 'Firefox';
+            else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+
+            return {
+                role: DB.currentUser ? DB.currentUser.role : null,
+                permissions: DB.currentUser ? DB.currentUser.permissions : null,
+                device: isMobile ? 'mobile' : 'desktop',
+                browser,
+                platform: navigator.platform || null
+            };
+        }
+
         function logAudit(action, details) {
             const now = Date.now();
             const entryId = String(now + Math.random());
             const userId = DB.currentUser ? DB.currentUser.id : 'system';
+            const meta = DB.currentUser ? getAuditMeta() : null;
 
             DB.auditLog.push({
                 id: entryId,
@@ -2617,7 +2661,8 @@
                 time: new Date(now).toLocaleString(),
                 user: userId,
                 action,
-                details
+                details,
+                meta
             });
             pruneAuditLog();
             saveDB();
@@ -2625,17 +2670,27 @@
             // Fire-and-forget: every action in the app calls logAudit synchronously
             // and doesn't expect a Promise back, so the actual write to Supabase
             // happens in the background rather than making logAudit itself async.
+            // .then(onSuccess, onFailure) — not .then(onSuccess) alone — so a
+            // rejected request (network drop mid-write) doesn't surface as an
+            // unhandled promise rejection; it's already handled by falling
+            // back to the local-only copy above.
             if (supabaseConnected) {
                 supabaseClient.rpc('write_audit_log', {
                     p_entry_id: entryId,
                     p_session_token: userId === 'system' ? null : currentSessionToken,
                     p_action: action,
-                    p_details: details || null
-                }).then(({ data, error }) => {
-                    if (error || !data?.success) {
-                        console.error('Audit log write to Supabase failed (kept locally)', error || data?.error);
+                    p_details: details || null,
+                    p_meta: meta
+                }).then(
+                    ({ data, error }) => {
+                        if (error || !data?.success) {
+                            console.error('Audit log write to Supabase failed (kept locally)', error || data?.error);
+                        }
+                    },
+                    (err) => {
+                        console.error('Audit log write to Supabase failed (kept locally)', err);
                     }
-                });
+                );
             }
         }
 
@@ -2751,11 +2806,16 @@
             lastActivityTime = Date.now();
         }
 
+        let activityListenersAttached = false;
+
         function startSessionTimeoutTracking() {
             lastActivityTime = Date.now();
-            ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
-                document.addEventListener(evt, recordActivity, { passive: true });
-            });
+            if (!activityListenersAttached) {
+                ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
+                    document.addEventListener(evt, recordActivity, { passive: true });
+                });
+                activityListenersAttached = true;
+            }
 
             if (sessionTimeoutInterval) clearInterval(sessionTimeoutInterval);
             sessionTimeoutInterval = setInterval(() => {
@@ -2774,6 +2834,12 @@
             if (sessionTimeoutInterval) {
                 clearInterval(sessionTimeoutInterval);
                 sessionTimeoutInterval = null;
+            }
+            if (activityListenersAttached) {
+                ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
+                    document.removeEventListener(evt, recordActivity, { passive: true });
+                });
+                activityListenersAttached = false;
             }
         }
 
@@ -2979,6 +3045,10 @@
                 alert('User ID and Password are required');
                 return;
             }
+            if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(id)) {
+                alert('User ID can only contain letters, numbers, dots, underscores, and hyphens (no spaces or other characters).');
+                return;
+            }
             if (DB.users.find(u => u.id === id)) {
                 alert('A user with this ID already exists');
                 return;
@@ -3006,8 +3076,8 @@
                 return `
                 <div class="user-card-row">
                     <div>
-                        <div class="uname">${u.name || u.id} <span style="color:#999; font-weight:400;">(${u.id})</span></div>
-                        <div class="urole">${u.role.toUpperCase()} · ${u.permissions.length} permission(s)</div>
+                        <div class="uname">${escapeHtml(u.name || u.id)} <span style="color:#999; font-weight:400;">(${escapeHtml(u.id)})</span></div>
+                        <div class="urole">${escapeHtml(u.role.toUpperCase())} · ${u.permissions.length} permission(s)</div>
                     </div>
                     <div>
                         <button class="btn-small edit" onclick="openPermEditor('${u.id}')"><i class="fas fa-key"></i> Permissions</button>
@@ -3353,8 +3423,8 @@
 
             grid.innerHTML = filtered.map(p => `
                 <div class="product-card" onclick="addToCart(${p.id})">
-                    <div class="product-icon">${p.icon}</div>
-                    <div class="product-name">${p.name}</div>
+                    <div class="product-icon">${escapeHtml(p.icon)}</div>
+                    <div class="product-name">${escapeHtml(p.name)}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
                     ${p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas ${packButtonLabel(p.unit).icon}"></i> ${packButtonLabel(p.unit).text}</button>` : ''}
@@ -3366,9 +3436,9 @@
             const tbody = document.getElementById('productsTableBody');
             tbody.innerHTML = DB.products.map((p, idx) => `
                 <tr>
-                    <td>${p.icon}</td>
-                    <td>${p.name}</td>
-                    <td style="font-family: monospace; font-size: 11px;">${p.barcode}</td>
+                    <td>${escapeHtml(p.icon)}</td>
+                    <td>${escapeHtml(p.name)}</td>
+                    <td style="font-family: monospace; font-size: 11px;">${escapeHtml(p.barcode)}</td>
                     <td>৳ ${p.price.toFixed(2)} / ${p.unit}</td>
                     <td>
                         ${formatQty(p.stock, p.unit)} ${p.unit}
@@ -4172,7 +4242,7 @@
 
             document.getElementById('invoicePaper').innerHTML = `
                 <div style="text-align:center; padding: 10px 0;">
-                    <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${product.icon} ${product.name}</div>
+                    <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${escapeHtml(product.icon)} ${escapeHtml(product.name)}</div>
                     <div style="font-size:12px; color:#555; margin-bottom:6px;">${labelLine}</div>
                     <div style="font-size:16px; font-weight:700; margin-bottom:10px;">৳ ${price.toFixed(2)}</div>
                     <svg id="barcodeSvg" style="max-width:100%;"></svg>
@@ -4269,17 +4339,17 @@
                 resultDiv.innerHTML = `
                     <div style="color: #27ae60; padding: 12px; background: #f0f8f4; border-radius: 6px;">
                         <strong>✓ VALID</strong><br><br>
-                        Product: ${product.icon} ${product.name}<br>
+                        Product: ${escapeHtml(product.icon)} ${escapeHtml(product.name)}<br>
                         Price: ৳${product.price.toFixed(2)}<br>
                         Stock: ${product.stock}<br>
-                        Barcode: ${product.barcode}
+                        Barcode: ${escapeHtml(product.barcode)}
                     </div>
                 `;
             } else {
                 resultDiv.innerHTML = `
                     <div style="color: #e74c3c; padding: 12px; background: #fff5f5; border-radius: 6px;">
                         <strong>✗ NOT FOUND</strong><br><br>
-                        Barcode: ${barcode}<br>
+                        Barcode: ${escapeHtml(barcode)}<br>
                         Status: Not in database
                     </div>
                 `;
@@ -4292,8 +4362,8 @@
 
             list.innerHTML = DB.products.map(p => `
                 <div style="padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
-                    <div style="font-weight: 600;">${p.icon} ${p.name}</div>
-                    <div style="color: #666; font-size: 11px; font-family: monospace;">📌 ${p.barcode}</div>
+                    <div style="font-weight: 600;">${escapeHtml(p.icon)} ${escapeHtml(p.name)}</div>
+                    <div style="color: #666; font-size: 11px; font-family: monospace;">📌 ${escapeHtml(p.barcode)}</div>
                 </div>
             `).join('');
         }
@@ -4379,7 +4449,7 @@
                 return `
                 <div class="cart-item">
                     <div class="cart-item-left">
-                        <div class="cart-item-name">${item.icon} ${item.name} <span style="color:#999; font-size:10px;">(${item.unit})</span>${isPacked ? ` <span style="color:#8e44ad; font-size:10px;">📦 ${item.packLabel}</span>` : ''}</div>
+                        <div class="cart-item-name">${escapeHtml(item.icon)} ${escapeHtml(item.name)} <span style="color:#999; font-size:10px;">(${escapeHtml(item.unit)})</span>${isPacked ? ` <span style="color:#8e44ad; font-size:10px;">📦 ${escapeHtml(item.packLabel)}</span>` : ''}</div>
                         <div class="cart-item-qty">
                             ${isPacked
                                 ? `<span style="font-size:12px; color:#666;">${formatQty(item.quantity, item.unit)} ${item.unit} (fixed)</span>`
@@ -4519,14 +4589,14 @@
 
             list.innerHTML = held.map(h => {
                 const total = h.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-                const itemSummary = h.cart.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ');
+                const itemSummary = h.cart.map(i => `${escapeHtml(i.name)} x${formatQty(i.quantity, i.unit || 'pcs')}${escapeHtml(i.unit || 'pcs')}`).join(', ');
                 const minutesAgo = Math.floor((Date.now() - h.heldAt) / 60000);
                 return `
                     <div class="user-card-row" style="align-items:flex-start;">
                         <div>
-                            <div class="uname">${h.note || '(no note)'} <span style="color:#999; font-weight:400;">· ৳${total.toFixed(2)}</span></div>
+                            <div class="uname">${escapeHtml(h.note) || '(no note)'} <span style="color:#999; font-weight:400;">· ৳${total.toFixed(2)}</span></div>
                             <div class="urole">${itemSummary}</div>
-                            <div class="urole">Held by ${h.heldBy} · ${minutesAgo < 1 ? 'just now' : minutesAgo + ' min ago'}</div>
+                            <div class="urole">Held by ${escapeHtml(h.heldBy)} · ${minutesAgo < 1 ? 'just now' : minutesAgo + ' min ago'}</div>
                         </div>
                         <div>
                             <button class="btn-small edit" onclick="recallHeldSale('${h.id}')"><i class="fas fa-undo"></i> Recall</button>
@@ -4829,16 +4899,16 @@
 
             const itemsHtml = sale.items.map(i => `
                 <tr>
-                    <td>${i.icon || ''} ${i.name}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${formatQty(i.returnedQty, i.unit || 'pcs')} ${i.unit || 'pcs'} returned)</span>` : ''}</td>
-                    <td class="num">${formatQty(i.quantity, i.unit || 'pcs')} ${i.unit || 'pcs'}</td>
+                    <td>${escapeHtml(i.icon || '')} ${escapeHtml(i.name)}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${formatQty(i.returnedQty, i.unit || 'pcs')} ${escapeHtml(i.unit || 'pcs')} returned)</span>` : ''}</td>
+                    <td class="num">${formatQty(i.quantity, i.unit || 'pcs')} ${escapeHtml(i.unit || 'pcs')}</td>
                     <td class="num">${i.price.toFixed(2)}</td>
                     <td class="num">${(i.price * i.quantity).toFixed(2)}</td>
                 </tr>
             `).join('');
 
             const logoHtml = (s.shopLogo || '').startsWith('http')
-                ? `<img src="${s.shopLogo}" style="max-height:48px; max-width:140px;" alt="logo">`
-                : `<div class="invoice-shop-logo">${s.shopLogo || '🛒'}</div>`;
+                ? `<img src="${escapeHtml(s.shopLogo)}" style="max-height:48px; max-width:140px;" alt="logo">`
+                : `<div class="invoice-shop-logo">${escapeHtml(s.shopLogo || '🛒')}</div>`;
 
             const statusBadge = sale.status === 'refunded'
                 ? '<div style="text-align:center; color:#e74c3c; font-weight:700; margin-bottom:8px;">⟲ FULLY REFUNDED</div>'
@@ -4849,19 +4919,19 @@
             document.getElementById('invoicePaper').innerHTML = `
                 <div class="invoice-shop-header">
                     ${logoHtml}
-                    <div class="invoice-shop-name">${s.shopName || 'My Shop'}</div>
+                    <div class="invoice-shop-name">${escapeHtml(s.shopName || 'My Shop')}</div>
                     <div class="invoice-shop-meta">
-                        ${s.shopAddress ? s.shopAddress + '<br>' : ''}
-                        ${s.shopPhone ? 'Tel: ' + s.shopPhone : ''}
+                        ${s.shopAddress ? escapeHtml(s.shopAddress) + '<br>' : ''}
+                        ${s.shopPhone ? 'Tel: ' + escapeHtml(s.shopPhone) : ''}
                     </div>
                 </div>
                 <div class="invoice-divider"></div>
                 ${statusBadge}
-                <div class="invoice-meta-row"><span>Invoice No:</span><strong>${sale.invoiceNo || '—'}</strong></div>
+                <div class="invoice-meta-row"><span>Invoice No:</span><strong>${escapeHtml(sale.invoiceNo || '—')}</strong></div>
                 <div class="invoice-meta-row"><span>Date:</span><span>${sale.date}</span></div>
-                <div class="invoice-meta-row"><span>Cashier:</span><span>${sale.cashier}</span></div>
-                ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${sale.paymentMethod}</span></div>` : ''}
-                ${sale.transactionId ? `<div class="invoice-meta-row"><span>Txn ID:</span><strong>${sale.transactionId}</strong></div>` : ''}
+                <div class="invoice-meta-row"><span>Cashier:</span><span>${escapeHtml(sale.cashier)}</span></div>
+                ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${escapeHtml(sale.paymentMethod)}</span></div>` : ''}
+                ${sale.transactionId ? `<div class="invoice-meta-row"><span>Txn ID:</span><strong>${escapeHtml(sale.transactionId)}</strong></div>` : ''}
                 <div class="invoice-divider"></div>
                 <table class="invoice-items-table">
                     <thead>
@@ -4880,7 +4950,7 @@
                         <div class="row"><span>Change</span><span>৳ ${(sale.change||0).toFixed(2)}</span></div>
                     ` : ''}
                 </div>
-                ${s.invoiceFooter ? `<div class="invoice-footer-note">${s.invoiceFooter}</div>` : ''}
+                ${s.invoiceFooter ? `<div class="invoice-footer-note">${escapeHtml(s.invoiceFooter)}</div>` : ''}
             `;
 
             currentPrintMode = 'invoice';
@@ -5007,9 +5077,9 @@
                     : s.status === 'partial_refund' ? ' <span style="color:#BA7517; font-size:10px;">(PARTIAL)</span>' : '';
                 return `
                 <tr>
-                    <td style="font-size: 11px;">${s.invoiceNo || ''}<br>${s.date}${statusTag}</td>
-                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}<br><span style="color:#999;">by ${s.cashier}</span></td>
-                    <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}${s.transactionId ? `<br><span style="color:#999;">Txn: ${s.transactionId}</span>` : ''}</td>
+                    <td style="font-size: 11px;">${escapeHtml(s.invoiceNo || '')}<br>${s.date}${statusTag}</td>
+                    <td style="font-size: 11px;">${s.items.map(i => `${escapeHtml(i.name)} x${formatQty(i.quantity, i.unit || 'pcs')}${escapeHtml(i.unit || 'pcs')}`).join(', ')}<br><span style="color:#999;">by ${escapeHtml(s.cashier)}</span></td>
+                    <td style="font-size: 11px;">${escapeHtml(s.paymentMethod || 'Cash')}${s.transactionId ? `<br><span style="color:#999;">Txn: ${escapeHtml(s.transactionId)}</span>` : ''}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
                         <button class="btn-edit" onclick="reprintInvoice(${s.id})" title="Reprint"><i class="fas fa-print"></i></button>
@@ -5022,7 +5092,7 @@
             const stockTbody = document.getElementById('stockReportBody');
             stockTbody.innerHTML = DB.products.map(p => `
                 <tr>
-                    <td>${p.icon} ${p.name}</td>
+                    <td>${escapeHtml(p.icon)} ${escapeHtml(p.name)}</td>
                     <td><strong>${formatQty(p.stock, p.unit)} ${p.unit}</strong></td>
                     <td>${p.stock <= DB.settings.lowStockThreshold ? '<span style="color: #e74c3c;">⚠ Low</span>' : '<span style="color: #27ae60;">✓ OK</span>'}</td>
                 </tr>
@@ -5101,7 +5171,7 @@
 
                 productMarginTbody.innerHTML = rows.map(p => `
                     <tr>
-                        <td>${p.icon} ${p.name}</td>
+                        <td>${escapeHtml(p.icon)} ${escapeHtml(p.name)}</td>
                         <td>${formatQty(p.qtySold, p.unit)} ${p.unit}</td>
                         <td>৳${p.revenue.toFixed(2)}</td>
                         <td>৳${p.cogs.toFixed(2)}</td>
@@ -5115,11 +5185,11 @@
             purchaseTbody.innerHTML = recentPurchases.map(p => `
                 <tr>
                     <td style="font-size:11px;">${p.date}</td>
-                    <td>${p.productName}</td>
+                    <td>${escapeHtml(p.productName)}</td>
                     <td>${formatQty(p.quantity, p.unit)} ${p.unit}</td>
                     <td>৳${p.costPrice.toFixed(2)}</td>
                     <td>৳${p.totalCost.toFixed(2)}</td>
-                    <td style="font-size:11px;">${p.supplier || '—'}</td>
+                    <td style="font-size:11px;">${escapeHtml(p.supplier) || '—'}</td>
                 </tr>
             `).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No restock history yet</td></tr>';
         }
@@ -5423,13 +5493,19 @@
             const body = document.getElementById('auditLogBody');
             if (!body) return;
             const recent = DB.auditLog.slice(-50).reverse();
-            body.innerHTML = recent.map(a => `
+            body.innerHTML = recent.map(a => {
+                const m = a.meta;
+                const context = m
+                    ? ` <span style="color:#aaa; font-size:10px;">(${escapeHtml(m.role || '')}${m.device ? ' · ' + escapeHtml(m.device) : ''}${m.browser ? ' · ' + escapeHtml(m.browser) : ''})</span>`
+                    : '';
+                return `
                 <div style="padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                    <strong style="color:#185FA5;">${a.user}</strong> · ${a.action.replace(/_/g, ' ')}
+                    <strong style="color:#185FA5;">${escapeHtml(a.user)}</strong>${context} · ${escapeHtml(a.action.replace(/_/g, ' '))}
                     <span style="color:#999; float:right;">${a.time}</span>
-                    <div style="color:#666;">${a.details || ''}</div>
+                    <div style="color:#666;">${escapeHtml(a.details || '')}</div>
                 </div>
-            `).join('') || '<p style="color:#999;">No activity yet.</p>';
+            `;
+            }).join('') || '<p style="color:#999;">No activity yet.</p>';
         }
 
         // ===== TRASH BIN (soft-delete recovery) =====
@@ -5442,13 +5518,13 @@
             body.innerHTML = items.map(t => {
                 const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - Math.floor((Date.now() - t.deletedAt) / (24*60*60*1000)));
                 const label = t.type === 'product'
-                    ? `${t.data.icon || ''} ${t.data.name} (barcode ${t.data.barcode})`
-                    : `Sale ${t.data.invoiceNo || ''} — ৳${(t.data.amount || 0).toFixed(2)}`;
+                    ? `${escapeHtml(t.data.icon || '')} ${escapeHtml(t.data.name)} (barcode ${escapeHtml(t.data.barcode)})`
+                    : `Sale ${escapeHtml(t.data.invoiceNo || '')} — ৳${(t.data.amount || 0).toFixed(2)}`;
                 return `
                     <div class="user-card-row">
                         <div>
                             <div class="uname">${t.type === 'product' ? '📦' : '🧾'} ${label}</div>
-                            <div class="urole">Deleted by ${t.deletedBy} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
+                            <div class="urole">Deleted by ${escapeHtml(t.deletedBy)} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
                         </div>
                         <div>
                             <button class="btn-small edit" onclick="restoreFromTrash('${t.id}')"><i class="fas fa-undo"></i> Restore</button>
@@ -5475,7 +5551,7 @@
                 return `
                     <div class="user-card-row">
                         <div>
-                            <div class="uname">${r.userId}</div>
+                            <div class="uname">${escapeHtml(r.userId)}</div>
                             <div class="urole">Requested ${new Date(r.createdAt).toLocaleTimeString()} · expires in ${minutesLeft} min</div>
                         </div>
                         <div style="display:flex; align-items:center; gap:10px;">
@@ -5898,7 +5974,7 @@
                         <td>৳${r.expectedTotal.toFixed(2)}</td>
                         <td>৳${r.counted.toFixed(2)}</td>
                         <td style="color:${diffColor}; font-weight:600;">৳${r.difference.toFixed(2)}</td>
-                        <td style="font-size:11px;">${r.reconciledBy}</td>
+                        <td style="font-size:11px;">${escapeHtml(r.reconciledBy)}</td>
                     </tr>
                 `;
             }).join('') || '<tr><td colspan="5" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
@@ -5963,9 +6039,10 @@
 
         function exportAuditLogCSV() {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            const rows = [['Date/Time', 'User', 'Action', 'Details']];
+            const rows = [['Date/Time', 'User', 'Role', 'Device', 'Browser', 'Action', 'Details']];
             DB.auditLog.forEach(a => {
-                rows.push([a.time, a.user, a.action.replace(/_/g, ' '), a.details || '']);
+                const m = a.meta || {};
+                rows.push([a.time, a.user, m.role || '', m.device || '', m.browser || '', a.action.replace(/_/g, ' '), a.details || '']);
             });
             downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', `Exported full audit log (${DB.auditLog.length} entries)`);
