@@ -2435,9 +2435,23 @@
                 })
                 .subscribe();
 
+            // audit_log is append-only (no UPDATE/DELETE policy allows changing an
+            // entry, ever — see Part 2), so this only ever needs to handle INSERT.
+            const auditChannel = supabaseClient.channel('audit-log-changes')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'audit_log' }, (payload) => {
+                    const incoming = rowToAudit(payload.new);
+                    if (!DB.auditLog.some(a => String(a.id) === String(incoming.id))) {
+                        DB.auditLog.push(incoming);
+                    }
+                    if (typeof loadAuditLog === 'function' && document.getElementById('admin')?.classList.contains('active')) {
+                        loadAuditLog();
+                    }
+                })
+                .subscribe();
+
             supabaseRealtimeChannels.push(
                 productsChannel, salesChannel, usersChannel,
-                heldChannel, trashChannel, resetReqChannel
+                heldChannel, trashChannel, resetReqChannel, auditChannel
             );
         }
 
