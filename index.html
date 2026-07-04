@@ -1748,8 +1748,8 @@
         // only the anon/public key, which is designed to be safe in
         // client-side code.
         // ============================================================
-        const SUPABASE_URL = 'https://eyptcvydovfuvpmyezeh.supabase.co/';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5cHRjdnlkb3ZmdXZwbXllemVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzNDE1MDUsImV4cCI6MjA5NzkxNzUwNX0.RJjqOgz0n9LBrW6r3PpEzDa2DdbHP2jQB55KritZiXE';
+        const SUPABASE_URL = 'https://papkczbugflupdzqmtpy.supabase.co/';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhcGtjemJ1Z2ZsdXBkenFtdHB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxMjIyMzMsImV4cCI6MjA5ODY5ODIzM30.serBud6QCJotdZsrtA5YuR_9An7rabjtEvZOgF9QiTQ';
 
         let supabaseClient = null;
         let supabaseConnected = false;
@@ -2103,16 +2103,13 @@
             try {
                 const tasks = [];
 
-                // These tables still accept direct writes (purchases, held_sales,
-                // reconciliations, audit_log, reset_requests keep their open policies
-                // for background upsert, now that every mutation also goes through an
-                // RPC — the upsert here keeps them in sync if a local-only action
-                // happened while Supabase was temporarily unreachable).
-                if (DB.purchases.length) tasks.push(supabaseClient.from('purchases').upsert(DB.purchases.map(purchaseToRow)));
-                if (DB.resetRequests.length) tasks.push(supabaseClient.from('reset_requests').upsert(DB.resetRequests.map(resetRequestToRow)));
-                if (DB.auditLog.length) tasks.push(supabaseClient.from('audit_log').upsert(DB.auditLog.map(auditToRow)));
-
-                // Settings route through its own RPC
+                // purchases, reset_requests, audit_log, held_sales, reconciliations,
+                // trash, products, sales, and app_users are all insert/update-locked
+                // by RLS (see supabase_permissions.sql / part2) — every mutation to
+                // those tables already goes through its own security-definer RPC at
+                // the moment it happens, so there is nothing left for this background
+                // push to catch up on. Settings is the only thing still pushed here,
+                // via its own RPC.
                 tasks.push(
                     supabaseClient.rpc('update_app_settings', {
                         p_user_id: DB.currentUser ? DB.currentUser.id : 'system',
@@ -2145,41 +2142,29 @@
             const statusEl = document.getElementById('migrationStatus');
             const updateStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
 
-            updateStatus('Migrating products...');
+            updateStatus('Migrating all data...');
             try {
-                for (const p of DB.products) {
-                    await supabaseClient.rpc('update_stock', {
-                        p_user_id: DB.currentUser.id,
-                        p_product_id: p.id,
-                        p_new_stock: p.stock,
-                        p_reason: 'migration',
-                        p_new_cost_price: p.costPrice || 0
-                    });
-                    // Also ensure the full product row exists via direct upsert
-                    // (update_stock only updates existing rows; we need insert too)
-                    await supabaseClient.from('products').upsert(productToRow(p));
-                }
+                const { data, error } = await supabaseClient.rpc('migrate_local_data', {
+                    p_user_id: DB.currentUser.id,
+                    p_products: DB.products.map(productToRow),
+                    p_users: DB.users.map(userToRow),
+                    p_sales: DB.sales.map(saleToRow),
+                    p_purchases: DB.purchases.map(purchaseToRow),
+                    p_trash: DB.trash.map(trashToRow),
+                    p_held_sales: DB.heldSales.map(heldSaleToRow),
+                    p_reconciliations: DB.reconciliations.map(reconciliationToRow),
+                    p_reset_requests: DB.resetRequests.map(resetRequestToRow),
+                    p_audit_log: DB.auditLog.map(auditToRow)
+                });
+                if (error) throw error;
+                if (!data?.success) throw new Error(data?.error || 'Migration failed');
 
-                updateStatus('Migrating users...');
-                for (const u of DB.users) {
-                    await supabaseClient.from('app_users').upsert(userToRow(u));
-                }
-
-                updateStatus('Migrating sales...');
-                for (const s of DB.sales) {
-                    await supabaseClient.from('sales').upsert(saleToRow(s));
-                }
-
-                updateStatus('Migrating purchases, trash, held sales, reconciliations...');
-                const tasks = [];
-                if (DB.purchases.length) tasks.push(supabaseClient.from('purchases').upsert(DB.purchases.map(purchaseToRow)));
-                if (DB.trash.length) tasks.push(supabaseClient.from('trash').upsert(DB.trash.map(trashToRow)));
-                if (DB.heldSales.length) tasks.push(supabaseClient.from('held_sales').upsert(DB.heldSales.map(heldSaleToRow)));
-                if (DB.reconciliations.length) tasks.push(supabaseClient.from('reconciliations').upsert(DB.reconciliations.map(reconciliationToRow), { onConflict: 'recon_date' }));
-                if (DB.auditLog.length) tasks.push(supabaseClient.from('audit_log').upsert(DB.auditLog.map(auditToRow)));
-                if (DB.resetRequests.length) tasks.push(supabaseClient.from('reset_requests').upsert(DB.resetRequests.map(resetRequestToRow)));
-                tasks.push(supabaseClient.rpc('update_app_settings', { p_user_id: DB.currentUser.id, p_settings: DB.settings }));
-                await Promise.all(tasks);
+                updateStatus('Migrating settings...');
+                const { error: settingsError } = await supabaseClient.rpc('update_app_settings', {
+                    p_user_id: DB.currentUser.id,
+                    p_settings: DB.settings
+                });
+                if (settingsError) throw settingsError;
 
                 updateStatus('');
                 logAudit('data_migrated', `Full local data migration to Supabase completed by ${DB.currentUser.id}`);
