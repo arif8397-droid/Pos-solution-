@@ -1439,6 +1439,9 @@
                             <button type="button" class="btn-add-product" onclick="migrateLocalDataToSupabase()">
                                 <i class="fas fa-upload"></i> Migrate All Local Data to Supabase
                             </button>
+                            <button type="button" class="btn-add-product" style="margin-top:8px; background:#555;" onclick="debugCheckPasswordSync()">
+                                <i class="fas fa-bug"></i> TEMP: Check All Users for Password Sync Issues
+                            </button>
                         </div>
 
                         <!-- Low Stock Settings -->
@@ -2291,8 +2294,50 @@
             }
         }
 
-        // Pull the current state of every shared table from Supabase into the
-        // in-memory DB object. Called once on startup after connecting.
+        // TEMPORARY DIAGNOSTIC — remove once you've confirmed every user's
+        // password is in sync. Compares each local user's password hash
+        // against what Supabase actually has on file. Any mismatch here
+        // means that user cannot establish a real server session on any
+        // device until it's fixed (via the Password button, now that it
+        // syncs properly, or by having them use "Forgot password").
+        async function debugCheckPasswordSync() {
+            if (!supabaseClient) { alert('supabaseClient is not initialized.'); return; }
+            try {
+                const { data: rows, error } = await supabaseClient
+                    .from('app_users')
+                    .select('id, password_hash');
+                if (error) throw error;
+
+                const remoteById = {};
+                rows.forEach(r => { remoteById[r.id] = r.password_hash; });
+
+                let report = 'Password sync check:\n\n';
+                let mismatchCount = 0;
+
+                DB.users.forEach(u => {
+                    const remoteHash = remoteById[u.id];
+                    if (remoteHash === undefined) {
+                        report += `⚠ "${u.id}" — exists locally but NOT in Supabase at all\n`;
+                        mismatchCount++;
+                    } else if (remoteHash !== u.password) {
+                        report += `✗ "${u.id}" — MISMATCH (will fail to get a session)\n`;
+                        mismatchCount++;
+                    } else {
+                        report += `✓ "${u.id}" — in sync\n`;
+                    }
+                });
+
+                report += `\n${mismatchCount} user(s) out of ${DB.users.length} need fixing.`;
+                if (mismatchCount > 0) {
+                    report += `\n\nFix each one by using the "Password" button next to them in the Users list (now that it properly syncs to Supabase), or have them use "Forgot password".`;
+                }
+
+                console.log(report);
+                alert(report);
+            } catch (e) {
+                alert('Could not run check: ' + (e.message || e));
+            }
+        }
         async function pullAllFromSupabase() {
             if (!supabaseClient) return;
 
@@ -2970,14 +3015,35 @@
             `}).join('');
         }
 
-        function changePassword(userId) {
+        async function changePassword(userId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const user = DB.users.find(u => u.id === userId);
             if (!user) return;
             const newPass = prompt(`Set new password for "${user.name || user.id}":`);
             if (newPass === null) return;
             if (!newPass.trim()) { alert('Password cannot be empty'); return; }
-            user.password = hashPassword(newPass.trim());
+
+            const newHash = hashPassword(newPass.trim());
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('admin_set_password', {
+                        p_session_token: currentSessionToken,
+                        p_target_user_id: userId,
+                        p_new_password_hash: newHash
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Password change was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side password change failed, applying locally only', e);
+                    alert('Could not reach shared accounts — changing password locally only. This user will not be able to establish a server session on any device until this syncs.');
+                }
+            }
+
+            user.password = newHash;
             logAudit('password_changed', `Password changed for "${userId}"`);
             saveDB();
             alert(`✓ Password updated for ${user.id}`);
