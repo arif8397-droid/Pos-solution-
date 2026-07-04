@@ -4,8 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Professional Enterprise Grocery POS</title>
+    <!--
+        Content-Security-Policy: defense-in-depth on top of the escapeHtml()
+        fixes elsewhere in this file. Note this still allows 'unsafe-inline'
+        for scripts/styles — this app uses inline onclick="..." handlers and
+        a single inline <script> block throughout, so a strict nonce/hash-based
+        CSP would require restructuring away from inline event handlers first
+        (a much bigger, separate project). What this DOES still block: any
+        script/stylesheet/frame/object from an unexpected third-party domain,
+        base-tag hijacking, and framing this page inside someone else's site.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'self'; frame-ancestors 'none';">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -1220,7 +1232,9 @@
                             <h3 style="color: #185FA5; margin: 0;"><i class="fas fa-chart-line"></i> Sales Trend (Last 7 Days)</h3>
                             <div>
                                 <button class="btn-edit" onclick="exportSalesCSV()"><i class="fas fa-file-csv"></i> Export Sales CSV</button>
+                                <button class="btn-edit" onclick="exportSalesExcel()"><i class="fas fa-file-excel"></i> Export Sales Excel</button>
                                 <button class="btn-edit" onclick="exportStockCSV()"><i class="fas fa-file-csv"></i> Export Stock CSV</button>
+                                <button class="btn-edit" onclick="exportStockExcel()"><i class="fas fa-file-excel"></i> Export Stock Excel</button>
                             </div>
                         </div>
                         <canvas id="salesChart" height="90"></canvas>
@@ -1313,6 +1327,7 @@
                         </div>
 
                         <button class="btn-edit" onclick="exportPurchasesCSV()"><i class="fas fa-file-csv"></i> Export Purchase History CSV</button>
+                        <button class="btn-edit" onclick="exportPurchasesExcel()"><i class="fas fa-file-excel"></i> Export Purchase History Excel</button>
                         <div style="max-height: 240px; overflow-y: auto; margin-top:10px;">
                             <table class="products-table">
                                 <thead>
@@ -1389,6 +1404,29 @@
                             </table>
                         </div>
                     </div>
+
+                    <div class="products-container" style="margin-top:16px;">
+                        <h3 style="color: #185FA5; margin-bottom: 8px;"><i class="fas fa-truck-loading"></i> Reorder Suggestions</h3>
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                            <label style="font-size:12px; color:#666;">Based on sales over the last
+                                <input type="number" id="reorderLookbackDays" value="14" min="1" max="90" style="width:60px;" onchange="loadReorderSuggestions()"> days,
+                                assuming a
+                                <input type="number" id="reorderLeadDays" value="7" min="1" max="60" style="width:60px;" onchange="loadReorderSuggestions()"> day restock lead time.
+                            </label>
+                        </div>
+                        <p style="font-size:11px; color:#999; margin-bottom:8px;">Estimated from each product's average daily sales — a rough guide, not a guarantee (seasonal items, promotions, or short sales histories can throw this off).</p>
+                        <table class="products-table">
+                            <thead>
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Avg. Daily Sales</th>
+                                    <th>Current Stock</th>
+                                    <th>Suggested Reorder</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reorderSuggestionsBody"></tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- ADMIN PANEL -->
@@ -1462,6 +1500,22 @@
                                 <input type="number" id="sessionTimeoutMinutes" value="5" min="0" onchange="updateSessionTimeout()">
                             </div>
                             <p style="font-size: 12px; color: #999;">Anyone left logged in on an unattended till is automatically signed out after this many minutes of no clicks, key presses, or touches.</p>
+                        </div>
+
+                        <!-- Active Sessions -->
+                        <div class="admin-card">
+                            <h4><i class="fas fa-users"></i> Currently Logged In</h4>
+                            <p style="font-size:12px; color:#999; margin-bottom:8px;">Each user can only have one active session at a time — logging in anywhere ends any other one automatically. This just shows who currently has one, and lets you force one out early if needed.</p>
+                            <button type="button" class="btn-add-product" style="margin-bottom:10px;" onclick="loadActiveSessions()"><i class="fas fa-sync"></i> Refresh</button>
+                            <div id="activeSessionsBody"></div>
+                        </div>
+
+                        <!-- Client Errors -->
+                        <div class="admin-card">
+                            <h4><i class="fas fa-bug"></i> Recent App Errors</h4>
+                            <p style="font-size:12px; color:#999; margin-bottom:8px;">Uncaught errors from any device running this app land here automatically — useful for spotting a bug before staff describe it to you.</p>
+                            <button type="button" class="btn-add-product" style="margin-bottom:10px;" onclick="loadClientErrors()"><i class="fas fa-sync"></i> Refresh</button>
+                            <div id="clientErrorsBody"></div>
                         </div>
 
                         <!-- Login Page Customization -->
@@ -1557,7 +1611,8 @@
                         <div class="admin-card" style="grid-column: 1 / -1;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                                 <h4 style="margin-bottom:0; border-bottom:none; padding-bottom:0;"><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(showing last 50 · retained 1 year)</span></h4>
-                                <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log (Excel)</button>
+                                <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log CSV</button>
+                                <button class="btn-edit" onclick="exportAuditLogExcel()"><i class="fas fa-file-excel"></i> Export Full Log Excel</button>
                             </div>
                             <div style="border-bottom: 2px solid #BA7517; margin: 10px 0 14px;"></div>
                             <div id="auditLogBody" style="max-height: 280px; overflow-y: auto; font-size: 12px;"></div>
@@ -1927,6 +1982,40 @@
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
         }
+
+        // ===== CLIENT-SIDE ERROR CAPTURE =====
+        // Sends uncaught errors and unhandled promise rejections to Supabase
+        // (log_client_error RPC) so bugs surface without needing someone to
+        // screenshot DevTools. Best-effort only — if this itself fails
+        // (offline, RPC missing), it just gives up silently; it must never
+        // be able to cause a second error of its own.
+        function reportClientError(message, stack, meta) {
+            try {
+                console.error('[captured]', message, stack || '');
+                if (!supabaseClient || !supabaseConnected) return;
+                const entryId = 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                supabaseClient.rpc('log_client_error', {
+                    p_entry_id: entryId,
+                    p_session_token: (typeof currentSessionToken !== 'undefined') ? currentSessionToken : null,
+                    p_message: String(message).slice(0, 2000),
+                    p_stack: stack ? String(stack).slice(0, 4000) : null,
+                    p_url: location.href,
+                    p_meta: meta || null
+                }).then(() => {}, () => {});
+            } catch (e) {
+                // Swallow — error reporting must never itself throw.
+            }
+        }
+
+        window.addEventListener('error', (event) => {
+            reportClientError(event.message, event.error && event.error.stack, { type: 'error', line: event.lineno, col: event.colno });
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+            const reason = event.reason;
+            const message = reason && reason.message ? reason.message : String(reason);
+            const stack = reason && reason.stack ? reason.stack : null;
+            reportClientError(message, stack, { type: 'unhandledrejection' });
+        });
 
         // Returns { valid, needsUpgrade } instead of a bare boolean so callers can
         // transparently re-hash and persist with the new algorithm the moment an
@@ -2592,13 +2681,22 @@
                     ? pendingPasswordUpgradeOldHash
                     : DB.currentUser.password;
 
+                const { device, browser } = detectDeviceBrowser();
                 const { data, error } = await supabaseClient.rpc('create_session', {
                     p_user_id: DB.currentUser.id,
-                    p_password_hash: hashForAuth
+                    p_password_hash: hashForAuth,
+                    p_device: device,
+                    p_browser: browser
                 });
                 if (error || !data?.success) {
                     console.warn('Could not establish a server session — admin/staff actions requiring elevated permissions will be unavailable until this succeeds', error || data?.error);
                     currentSessionToken = null;
+                    // A lockout is the one case worth telling the user about
+                    // directly — everything else (network hiccup, etc.) just
+                    // silently falls back to local-only mode as before.
+                    if (data?.error && /too many failed attempts/i.test(data.error)) {
+                        alert(data.error);
+                    }
                     return;
                 }
                 currentSessionToken = data.token;
@@ -2631,7 +2729,9 @@
         // an unfamiliar browser). No IP capture — the browser has no
         // reliable way to know its own public IP without a third-party
         // call, and this app doesn't proxy requests through its own server.
-        function getAuditMeta() {
+        // Shared by getAuditMeta() and session creation — not exhaustive
+        // UA sniffing, just enough to label "roughly what this is."
+        function detectDeviceBrowser() {
             const ua = navigator.userAgent || '';
             const isMobile = /Mobi|Android|iPhone|iPad/i.test(ua);
             let browser = 'Unknown';
@@ -2639,11 +2739,15 @@
             else if (ua.includes('Chrome/') && !ua.includes('Chromium')) browser = 'Chrome';
             else if (ua.includes('Firefox/')) browser = 'Firefox';
             else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+            return { device: isMobile ? 'mobile' : 'desktop', browser };
+        }
 
+        function getAuditMeta() {
+            const { device, browser } = detectDeviceBrowser();
             return {
                 role: DB.currentUser ? DB.currentUser.role : null,
                 permissions: DB.currentUser ? DB.currentUser.permissions : null,
-                device: isMobile ? 'mobile' : 'desktop',
+                device,
                 browser,
                 platform: navigator.platform || null
             };
@@ -2883,7 +2987,7 @@
 
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
-            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); }
+            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); loadActiveSessions(); loadClientErrors(); }
             if (section === 'reports') { renderSalesChart(); loadReconciliationHistory(); }
         }
 
@@ -5100,6 +5204,53 @@
 
             renderSalesChart();
             loadMarginAndPurchaseHistory();
+            loadReorderSuggestions();
+        }
+
+        // Estimates reorder needs from each product's average daily sales
+        // over a configurable lookback window, projected across a
+        // configurable restock lead time. Purely a client-side calculation
+        // against data already loaded — no new schema needed.
+        function loadReorderSuggestions() {
+            const tbody = document.getElementById('reorderSuggestionsBody');
+            if (!tbody) return;
+
+            const lookbackDaysEl = document.getElementById('reorderLookbackDays');
+            const leadDaysEl = document.getElementById('reorderLeadDays');
+            const lookbackDays = Math.max(1, parseInt(lookbackDaysEl?.value, 10) || 14);
+            const leadDays = Math.max(1, parseInt(leadDaysEl?.value, 10) || 7);
+            const cutoff = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+
+            const qtySoldByProduct = {};
+            DB.sales.forEach(s => {
+                if (s.id < cutoff) return; // sale ids are timestamps in this app
+                if (s.status === 'refunded') return;
+                s.items.forEach(item => {
+                    const returned = item.returnedQty || 0;
+                    const netQty = Math.max(0, item.quantity - returned);
+                    qtySoldByProduct[item.name] = (qtySoldByProduct[item.name] || 0) + netQty;
+                });
+            });
+
+            const rows = DB.products
+                .map(p => {
+                    const totalSold = qtySoldByProduct[p.name] || 0;
+                    const avgDaily = totalSold / lookbackDays;
+                    const projectedNeed = avgDaily * leadDays;
+                    const suggested = Math.max(0, projectedNeed - p.stock);
+                    return { p, avgDaily, suggested };
+                })
+                .filter(r => r.suggested > 0.01) // only show products actually worth reordering
+                .sort((a, b) => b.suggested - a.suggested);
+
+            tbody.innerHTML = rows.map(r => `
+                <tr>
+                    <td>${escapeHtml(r.p.icon)} ${escapeHtml(r.p.name)}</td>
+                    <td>${formatQty(r.avgDaily, r.p.unit)} ${escapeHtml(r.p.unit)}/day</td>
+                    <td>${formatQty(r.p.stock, r.p.unit)} ${escapeHtml(r.p.unit)}</td>
+                    <td><strong style="color:#BA7517;">${formatQty(r.suggested, r.p.unit)} ${escapeHtml(r.p.unit)}</strong></td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" style="text-align:center; color:#999;">Nothing needs reordering based on recent sales — or there isn\'t enough sales history yet.</td></tr>';
         }
 
         function loadMarginAndPurchaseHistory() {
@@ -5194,14 +5345,24 @@
             `).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No restock history yet</td></tr>';
         }
 
-        function exportPurchasesCSV() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+        function buildPurchasesExportRows() {
             const rows = [['Date', 'Product', 'Quantity', 'Unit', 'Cost Price', 'Total Cost', 'Supplier', 'Notes', 'Added By']];
             DB.purchases.forEach(p => {
                 rows.push([p.date, p.productName, p.quantity, p.unit, p.costPrice.toFixed(2), p.totalCost.toFixed(2), p.supplier || '', p.notes || '', p.addedBy]);
             });
-            downloadCSV(`purchase_history_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            return rows;
+        }
+
+        function exportPurchasesCSV() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            downloadCSV(`purchase_history_${new Date().toISOString().slice(0,10)}.csv`, buildPurchasesExportRows());
             logAudit('export', 'Exported purchase history CSV');
+        }
+
+        function exportPurchasesExcel() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            downloadExcel(`purchase_history_${new Date().toISOString().slice(0,10)}.xlsx`, buildPurchasesExportRows(), 'Purchases');
+            logAudit('export', 'Exported purchase history Excel');
         }
 
         function reprintInvoice(saleId) {
@@ -5585,6 +5746,89 @@
             DB.resetRequests = DB.resetRequests.filter(r => String(r.id) !== String(requestId));
             saveDB();
             loadResetRequests();
+        }
+
+        // ===== ACTIVE SESSIONS (admin visibility + force-logout) =====
+        async function loadActiveSessions() {
+            const body = document.getElementById('activeSessionsBody');
+            if (!body || !hasPerm('admin')) return;
+
+            if (!supabaseConnected) {
+                body.innerHTML = '<p style="color:#999; font-size:12px;">Not connected to Supabase — session list isn\'t available offline.</p>';
+                return;
+            }
+
+            body.innerHTML = '<p style="color:#999; font-size:12px;">Loading…</p>';
+            try {
+                const { data, error } = await supabaseClient.rpc('list_active_sessions', {
+                    p_session_token: currentSessionToken
+                });
+                if (error) throw error;
+
+                body.innerHTML = (data || []).map(s => `
+                    <div class="user-card-row">
+                        <div>
+                            <div class="uname">${escapeHtml(s.user_id)}</div>
+                            <div class="urole">${escapeHtml(s.device || '')} · ${escapeHtml(s.browser || '')} · since ${new Date(s.created_at).toLocaleString()}</div>
+                        </div>
+                        <div>
+                            ${s.user_id !== DB.currentUser.id ? `<button class="btn-small del" onclick="revokeUserSession('${s.user_id}')"><i class="fas fa-sign-out-alt"></i> Force Logout</button>` : '<span style="color:#999; font-size:11px;">(you)</span>'}
+                        </div>
+                    </div>
+                `).join('') || '<p style="color:#999; font-size:12px;">No one is currently logged in.</p>';
+            } catch (e) {
+                body.innerHTML = `<p style="color:#e74c3c; font-size:12px;">Could not load sessions: ${escapeHtml(e.message || String(e))}</p>`;
+            }
+        }
+
+        async function revokeUserSession(targetUserId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            if (!confirm(`Force-logout "${targetUserId}"? Their next action will require logging in again.`)) return;
+
+            try {
+                const { data, error } = await supabaseClient.rpc('revoke_session', {
+                    p_session_token: currentSessionToken,
+                    p_target_user_id: targetUserId
+                });
+                if (error) throw error;
+                if (!data || !data.success) {
+                    alert(data?.error || 'Could not revoke that session.');
+                    return;
+                }
+                logAudit('session_revoked', `Force-logged-out "${targetUserId}"`);
+                loadActiveSessions();
+            } catch (e) {
+                alert('Could not revoke session: ' + (e.message || e));
+            }
+        }
+
+        // ===== RECENT CLIENT-SIDE ERRORS (admin visibility) =====
+        async function loadClientErrors() {
+            const body = document.getElementById('clientErrorsBody');
+            if (!body || !hasPerm('admin')) return;
+
+            if (!supabaseConnected) {
+                body.innerHTML = '<p style="color:#999; font-size:12px;">Not connected to Supabase — error log isn\'t available offline.</p>';
+                return;
+            }
+
+            body.innerHTML = '<p style="color:#999; font-size:12px;">Loading…</p>';
+            try {
+                const { data, error } = await supabaseClient.rpc('list_recent_client_errors', {
+                    p_session_token: currentSessionToken,
+                    p_limit: 50
+                });
+                if (error) throw error;
+
+                body.innerHTML = (data || []).map(e => `
+                    <div style="padding:6px 0; border-bottom:1px solid #f0f0f0;">
+                        <div><strong style="color:#e74c3c;">${escapeHtml(e.message)}</strong></div>
+                        <div style="color:#999; font-size:11px;">${escapeHtml(e.user_id || 'anonymous')} · ${new Date(e.occurred_at).toLocaleString()}${e.meta?.device ? ' · ' + escapeHtml(e.meta.device) : ''}${e.meta?.browser ? ' · ' + escapeHtml(e.meta.browser) : ''}</div>
+                    </div>
+                `).join('') || '<p style="color:#999; font-size:12px;">No errors recorded recently.</p>';
+            } catch (e) {
+                body.innerHTML = `<p style="color:#e74c3c; font-size:12px;">Could not load errors: ${escapeHtml(e.message || String(e))}</p>`;
+            }
         }
 
         async function restoreFromTrash(trashId) {
@@ -6000,7 +6244,22 @@
             URL.revokeObjectURL(url);
         }
 
-        function exportSalesCSV() {
+        // Same "array of rows, first row is headers" shape as downloadCSV,
+        // just written out as a real .xlsx via SheetJS instead of plain text —
+        // useful when the destination is Excel and formatting/column widths
+        // matter more than universal compatibility.
+        function downloadExcel(filename, rows, sheetName) {
+            if (typeof XLSX === 'undefined') {
+                alert('Excel export library did not load — check your internet connection and try again.');
+                return;
+            }
+            const worksheet = XLSX.utils.aoa_to_sheet(rows);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, sheetName || 'Sheet1');
+            XLSX.writeFile(workbook, filename);
+        }
+
+        function buildSalesExportRows() {
             const rows = [['Invoice No', 'Date', 'Items', 'Subtotal', 'Discount', 'Amount', 'Refunded', 'Payment Method', 'Transaction ID', 'Cashier', 'Status']];
             DB.sales.forEach(s => {
                 rows.push([
@@ -6017,11 +6276,20 @@
                     s.status || 'completed'
                 ]);
             });
-            downloadCSV(`sales_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            return rows;
+        }
+
+        function exportSalesCSV() {
+            downloadCSV(`sales_export_${new Date().toISOString().slice(0,10)}.csv`, buildSalesExportRows());
             logAudit('export', 'Exported sales CSV');
         }
 
-        function exportStockCSV() {
+        function exportSalesExcel() {
+            downloadExcel(`sales_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildSalesExportRows(), 'Sales');
+            logAudit('export', 'Exported sales Excel');
+        }
+
+        function buildStockExportRows() {
             const rows = [['Name', 'Barcode', 'Unit', 'Price', 'Stock', 'Status']];
             DB.products.forEach(p => {
                 rows.push([
@@ -6033,19 +6301,38 @@
                     p.stock <= DB.settings.lowStockThreshold ? 'Low Stock' : 'OK'
                 ]);
             });
-            downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            return rows;
+        }
+
+        function exportStockCSV() {
+            downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, buildStockExportRows());
             logAudit('export', 'Exported stock CSV');
         }
 
-        function exportAuditLogCSV() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+        function exportStockExcel() {
+            downloadExcel(`stock_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildStockExportRows(), 'Stock');
+            logAudit('export', 'Exported stock Excel');
+        }
+
+        function buildAuditLogExportRows() {
             const rows = [['Date/Time', 'User', 'Role', 'Device', 'Browser', 'Action', 'Details']];
             DB.auditLog.forEach(a => {
                 const m = a.meta || {};
                 rows.push([a.time, a.user, m.role || '', m.device || '', m.browser || '', a.action.replace(/_/g, ' '), a.details || '']);
             });
-            downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
+            return rows;
+        }
+
+        function exportAuditLogCSV() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, buildAuditLogExportRows());
             logAudit('export', `Exported full audit log (${DB.auditLog.length} entries)`);
+        }
+
+        function exportAuditLogExcel() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            downloadExcel(`audit_log_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildAuditLogExportRows(), 'Audit Log');
+            logAudit('export', `Exported full audit log to Excel (${DB.auditLog.length} entries)`);
         }
 
         // Ensure login page reflects current branding settings immediately on load
