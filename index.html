@@ -1188,12 +1188,14 @@
                                     </div>
                                     <div class="form-field" id="sellModeField" style="display:none; grid-column: 1 / -1;">
                                         <label>Sold As</label>
-                                        <div class="segmented-toggle" style="max-width: 360px;">
-                                            <button type="button" class="segment-btn active" id="sellModeBtnLoose" onclick="setSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
-                                            <button type="button" class="segment-btn" id="sellModeBtnPrepacked" onclick="setSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
+                                        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+                                            <div class="segmented-toggle" style="max-width: 320px; flex-shrink:0;">
+                                                <button type="button" class="segment-btn active" id="sellModeBtnLoose" onclick="setSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
+                                                <button type="button" class="segment-btn" id="sellModeBtnPrepacked" onclick="setSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
+                                            </div>
+                                            <div id="sellModeHint" style="font-size:11px; color:#999; flex:1; min-width:200px;"></div>
                                         </div>
                                         <input type="hidden" id="productSellMode" value="loose">
-                                        <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:6px;"></div>
                                     </div>
                                     <div class="form-field">
                                         <label id="productCostPriceLabel">Cost Price (৳ / pcs)</label>
@@ -1215,8 +1217,8 @@
                                         </div>
                                         <div id="emojiSuggestRow" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;"></div>
                                     </div>
-                                    <button type="button" class="btn-add-product" onclick="addProduct()">Add</button>
                                 </div>
+                                <button type="button" class="btn-add-product" style="margin-top: 14px;" onclick="addProduct()">Add</button>
                                 <div id="emojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
                             </div>
                         </div>
