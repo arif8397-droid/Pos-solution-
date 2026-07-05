@@ -1612,8 +1612,10 @@
                         <div class="admin-card" style="grid-column: 1 / -1;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                                 <h4 style="margin-bottom:0; border-bottom:none; padding-bottom:0;"><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(showing last 50 · retained 1 year)</span></h4>
-                                <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log CSV</button>
-                                <button class="btn-edit" onclick="exportAuditLogExcel()"><i class="fas fa-file-excel"></i> Export Full Log Excel</button>
+                                <div>
+                                    <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log CSV</button>
+                                    <button class="btn-edit" onclick="exportAuditLogExcel()"><i class="fas fa-file-excel"></i> Export Full Log Excel</button>
+                                </div>
                             </div>
                             <div style="border-bottom: 2px solid #BA7517; margin: 10px 0 14px;"></div>
                             <div id="auditLogBody" style="max-height: 280px; overflow-y: auto; font-size: 12px;"></div>
