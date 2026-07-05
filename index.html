@@ -1186,9 +1186,9 @@
                                             <option value="ml">Millilitre (ml)</option>
                                         </select>
                                     </div>
-                                    <div class="form-field" id="sellModeField" style="display:none;">
+                                    <div class="form-field" id="sellModeField" style="display:none; grid-column: 1 / -1;">
                                         <label>Sold As</label>
-                                        <div class="segmented-toggle">
+                                        <div class="segmented-toggle" style="max-width: 360px;">
                                             <button type="button" class="segment-btn active" id="sellModeBtnLoose" onclick="setSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
                                             <button type="button" class="segment-btn" id="sellModeBtnPrepacked" onclick="setSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
                                         </div>
