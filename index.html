@@ -1298,6 +1298,7 @@
                                         <th>Counted</th>
                                         <th>Difference</th>
                                         <th>By</th>
+                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody id="reconciliationHistoryBody"></tbody>
@@ -1850,6 +1851,7 @@
             pack_weigh: 'Pack & Weigh Items',
             restock_purchase: 'Restock / Record Purchases',
             view_reports: 'View Reports',
+            reconcile_cash: 'Cash Drawer Reconciliation',
             admin: 'Full Admin Access'
         };
 
@@ -2048,7 +2050,7 @@
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: hashPassword('1234'), role: 'admin',
-                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','admin'] },
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','reconcile_cash','admin'] },
                 { id: 'scanner', name: 'Scanner Operator', password: hashPassword('1234'), role: 'scanner',
                   permissions: ['view_reports'] },
                 { id: 'cashier', name: 'Cashier', password: hashPassword('1234'), role: 'cashier',
@@ -5678,13 +5680,21 @@
             const items = DB.trash.slice().reverse();
             body.innerHTML = items.map(t => {
                 const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - Math.floor((Date.now() - t.deletedAt) / (24*60*60*1000)));
-                const label = t.type === 'product'
-                    ? `${escapeHtml(t.data.icon || '')} ${escapeHtml(t.data.name)} (barcode ${escapeHtml(t.data.barcode)})`
-                    : `Sale ${escapeHtml(t.data.invoiceNo || '')} — ৳${(t.data.amount || 0).toFixed(2)}`;
+                let label, icon;
+                if (t.type === 'product') {
+                    label = `${escapeHtml(t.data.icon || '')} ${escapeHtml(t.data.name)} (barcode ${escapeHtml(t.data.barcode)})`;
+                    icon = '📦';
+                } else if (t.type === 'reconciliation') {
+                    label = `Cash reconciliation for ${escapeHtml(t.data.date)} — ৳${(t.data.difference || 0).toFixed(2)} diff`;
+                    icon = '🧮';
+                } else {
+                    label = `Sale ${escapeHtml(t.data.invoiceNo || '')} — ৳${(t.data.amount || 0).toFixed(2)}`;
+                    icon = '🧾';
+                }
                 return `
                     <div class="user-card-row">
                         <div>
-                            <div class="uname">${t.type === 'product' ? '📦' : '🧾'} ${label}</div>
+                            <div class="uname">${icon} ${label}</div>
                             <div class="urole">Deleted by ${escapeHtml(t.deletedBy)} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
                         </div>
                         <div>
@@ -5843,6 +5853,13 @@
                     return;
                 }
             }
+            if (entry.type === 'reconciliation') {
+                const dateTaken = DB.reconciliations.find(r => r.date === entry.data.date);
+                if (dateTaken) {
+                    alert(`Cannot restore — a reconciliation for ${entry.data.date} already exists. Delete that one first if you want to bring this one back.`);
+                    return;
+                }
+            }
 
             if (supabaseConnected) {
                 try {
@@ -5861,10 +5878,12 @@
                     alert('Could not reach shared inventory — restoring locally only. This may need manual reconciliation with other counters.');
                     if (entry.type === 'product') DB.products.push(entry.data);
                     else if (entry.type === 'sale') DB.sales.push(entry.data);
+                    else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
                 }
             } else {
                 if (entry.type === 'product') DB.products.push(entry.data);
                 else if (entry.type === 'sale') DB.sales.push(entry.data);
+                else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
             }
 
             if (entry.type === 'product') {
@@ -5874,11 +5893,13 @@
                 checkLowStock();
             } else if (entry.type === 'sale') {
                 loadReports();
+            } else if (entry.type === 'reconciliation') {
+                loadReconciliationHistory();
             }
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
+            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
             saveDB();
             alert('✓ Restored successfully');
         }
@@ -5908,7 +5929,7 @@
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
+            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
             saveDB();
         }
 
@@ -6136,7 +6157,7 @@
         }
 
         async function saveCashReconciliation() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            if (!hasPerm('reconcile_cash') && !hasPerm('admin')) { alert('Cash reconciliation access required'); return; }
 
             const dateStr = document.getElementById('reconcileDate').value;
             if (!dateStr) {
@@ -6219,9 +6240,47 @@
                         <td>৳${r.counted.toFixed(2)}</td>
                         <td style="color:${diffColor}; font-weight:600;">৳${r.difference.toFixed(2)}</td>
                         <td style="font-size:11px;">${escapeHtml(r.reconciledBy)}</td>
+                        <td>${hasPerm('admin') ? `<button class="btn-delete-product" onclick="deleteReconciliation(${r.id})" title="Delete this entry — e.g. if it was entered for the wrong date or with wrong figures"><i class="fas fa-trash"></i></button>` : ''}</td>
                     </tr>
                 `;
-            }).join('') || '<tr><td colspan="5" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
+            }).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
+        }
+
+        // Removing a wrongly-entered reconciliation is admin-only regardless
+        // of who can create entries — soft-deletes into the same Trash Bin
+        // used for products/sales, so it's recoverable if removed by mistake.
+        async function deleteReconciliation(reconId) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const entry = DB.reconciliations.find(r => r.id === reconId);
+            if (!entry) return;
+            if (!confirm(`Delete the reconciliation for ${entry.date}? It'll move to Trash and can be restored from there if this was a mistake.`)) return;
+
+            const trashId = 'recon_' + reconId;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('delete_reconciliation_safe', {
+                        p_session_token: currentSessionToken,
+                        p_recon_id: reconId,
+                        p_trash_id: trashId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side reconciliation delete failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only. This may need manual reconciliation with other counters.');
+                }
+            }
+
+            DB.trash.push({ id: trashId, type: 'reconciliation', deletedAt: Date.now(), deletedBy: DB.currentUser.id, data: entry });
+            DB.reconciliations = DB.reconciliations.filter(r => r.id !== reconId);
+            saveDB();
+            logAudit('reconciliation_deleted', `Deleted reconciliation for ${entry.date} (moved to trash)`);
+            loadReconciliationHistory();
+            loadTrashBin();
         }
 
         // ===== CSV / EXCEL EXPORT =====
