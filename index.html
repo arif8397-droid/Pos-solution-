@@ -563,6 +563,42 @@
             border-color: #BA7517;
         }
 
+        /* Two-way toggle used for "Sold As" — a plain dropdown looked cramped
+           and unclear for a binary choice with long descriptive labels, so
+           this reads at a glance and leaves the detail to the hint line below
+           instead of packing it into the option text itself. */
+        .segmented-toggle {
+            display: flex;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .segmented-toggle .segment-btn {
+            flex: 1;
+            padding: 8px 10px;
+            border: none;
+            background: #fff;
+            color: #555;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border-right: 1px solid #d0d0d0;
+            transition: background 0.15s, color 0.15s;
+        }
+        .segmented-toggle .segment-btn:last-child {
+            border-right: none;
+        }
+        .segmented-toggle .segment-btn i {
+            margin-right: 5px;
+        }
+        .segmented-toggle .segment-btn:hover:not(.active) {
+            background: #f5f5f5;
+        }
+        .segmented-toggle .segment-btn.active {
+            background: #185FA5;
+            color: #fff;
+        }
+
         .barcode-scan-section {
             background: #e8f4f8;
             padding: 12px;
@@ -1131,7 +1167,7 @@
                         <div class="add-product-section">
                             <div style="margin-bottom: 12px;">
                                 <h4 style="color: #185FA5; font-size: 14px; margin-bottom: 8px;">Add New Product</h4>
-                                <div class="form-grid">
+                                <div class="form-grid" style="align-items: start;">
                                     <div class="form-field">
                                         <label>Name</label>
                                         <input type="text" id="productName" placeholder="Product name" oninput="updateEmojiSuggestions()">
@@ -1152,11 +1188,12 @@
                                     </div>
                                     <div class="form-field" id="sellModeField" style="display:none;">
                                         <label>Sold As</label>
-                                        <select id="productSellMode" onchange="onSellModeChange()">
-                                            <option value="loose">Pack on demand — weighed/counted per customer at counter</option>
-                                            <option value="prepacked">Fixed unit — sold as a single sealed piece, no packing step</option>
-                                        </select>
-                                        <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:4px;"></div>
+                                        <div class="segmented-toggle">
+                                            <button type="button" class="segment-btn active" id="sellModeBtnLoose" onclick="setSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
+                                            <button type="button" class="segment-btn" id="sellModeBtnPrepacked" onclick="setSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
+                                        </div>
+                                        <input type="hidden" id="productSellMode" value="loose">
+                                        <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:6px;"></div>
                                     </div>
                                     <div class="form-field">
                                         <label id="productCostPriceLabel">Cost Price (৳ / pcs)</label>
@@ -1654,10 +1691,11 @@
                 </div>
                 <div class="form-field">
                     <label>Sold As</label>
-                    <select id="editSellMode">
-                        <option value="loose">Pack on demand — weighed/counted at counter</option>
-                        <option value="prepacked">Fixed unit — sold as a single sealed piece</option>
-                    </select>
+                    <div class="segmented-toggle">
+                        <button type="button" class="segment-btn active" id="editSellModeBtnLoose" onclick="setEditSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
+                        <button type="button" class="segment-btn" id="editSellModeBtnPrepacked" onclick="setEditSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
+                    </div>
+                    <input type="hidden" id="editSellMode" value="loose">
                 </div>
                 <div class="form-field">
                     <label id="editCostPriceLabel">Cost Price (৳)</label>
@@ -3708,6 +3746,22 @@
             onSellModeChange();
         }
 
+        // Drives the segmented "Sold As" toggle: updates the hidden value
+        // input (so addProduct()'s existing read of #productSellMode.value
+        // doesn't need to change at all) and the active/inactive button styling.
+        function setSellMode(mode) {
+            document.getElementById('productSellMode').value = mode;
+            document.getElementById('sellModeBtnLoose').classList.toggle('active', mode === 'loose');
+            document.getElementById('sellModeBtnPrepacked').classList.toggle('active', mode === 'prepacked');
+            onSellModeChange();
+        }
+
+        function setEditSellMode(mode) {
+            document.getElementById('editSellMode').value = mode;
+            document.getElementById('editSellModeBtnLoose').classList.toggle('active', mode === 'loose');
+            document.getElementById('editSellModeBtnPrepacked').classList.toggle('active', mode === 'prepacked');
+        }
+
         function onSellModeChange() {
             const unit = document.getElementById('productUnit').value;
             const sellMode = document.getElementById('productSellMode').value;
@@ -3755,6 +3809,8 @@
             document.getElementById('productBarcode').value = '';
             document.getElementById('productUnit').value = 'pcs';
             document.getElementById('productSellMode').value = 'loose';
+            document.getElementById('sellModeBtnLoose').classList.add('active');
+            document.getElementById('sellModeBtnPrepacked').classList.remove('active');
             onUnitChange();
             document.getElementById('productCostPrice').value = '';
             document.getElementById('productPrice').value = '';
@@ -3788,7 +3844,7 @@
             document.getElementById('editName').value = product.name;
             document.getElementById('editBarcode').value = product.barcode;
             document.getElementById('editUnit').value = product.unit || 'pcs';
-            document.getElementById('editSellMode').value = product.sellMode || 'loose';
+            setEditSellMode(product.sellMode || 'loose');
             document.getElementById('editCostPrice').value = product.costPrice || 0;
             document.getElementById('editPrice').value = product.price;
             document.getElementById('editIcon').value = product.icon || '📦';
