@@ -4,20 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Professional Enterprise Grocery POS</title>
-    <!--
-        Content-Security-Policy: defense-in-depth on top of the escapeHtml()
-        fixes elsewhere in this file. Note this still allows 'unsafe-inline'
-        for scripts/styles — this app uses inline onclick="..." handlers and
-        a single inline <script> block throughout, so a strict nonce/hash-based
-        CSP would require restructuring away from inline event handlers first
-        (a much bigger, separate project). What this DOES still block: any
-        script/stylesheet/frame/object from an unexpected third-party domain,
-        base-tag hijacking, and framing this page inside someone else's site.
-    -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'self'; frame-ancestors 'none';">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -561,42 +549,6 @@
         .form-field input:focus, .form-field select:focus {
             outline: none;
             border-color: #BA7517;
-        }
-
-        /* Two-way toggle used for "Sold As" — a plain dropdown looked cramped
-           and unclear for a binary choice with long descriptive labels, so
-           this reads at a glance and leaves the detail to the hint line below
-           instead of packing it into the option text itself. */
-        .segmented-toggle {
-            display: flex;
-            border: 1px solid #d0d0d0;
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .segmented-toggle .segment-btn {
-            flex: 1;
-            padding: 8px 10px;
-            border: none;
-            background: #fff;
-            color: #555;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            border-right: 1px solid #d0d0d0;
-            transition: background 0.15s, color 0.15s;
-        }
-        .segmented-toggle .segment-btn:last-child {
-            border-right: none;
-        }
-        .segmented-toggle .segment-btn i {
-            margin-right: 5px;
-        }
-        .segmented-toggle .segment-btn:hover:not(.active) {
-            background: #f5f5f5;
-        }
-        .segmented-toggle .segment-btn.active {
-            background: #185FA5;
-            color: #fff;
         }
 
         .barcode-scan-section {
@@ -1167,7 +1119,7 @@
                         <div class="add-product-section">
                             <div style="margin-bottom: 12px;">
                                 <h4 style="color: #185FA5; font-size: 14px; margin-bottom: 8px;">Add New Product</h4>
-                                <div class="form-grid" style="align-items: start;">
+                                <div class="form-grid">
                                     <div class="form-field">
                                         <label>Name</label>
                                         <input type="text" id="productName" placeholder="Product name" oninput="updateEmojiSuggestions()">
@@ -1186,16 +1138,13 @@
                                             <option value="ml">Millilitre (ml)</option>
                                         </select>
                                     </div>
-                                    <div class="form-field" id="sellModeField" style="display:none; grid-column: 1 / -1;">
+                                    <div class="form-field" id="sellModeField" style="display:none;">
                                         <label>Sold As</label>
-                                        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-                                            <div class="segmented-toggle" style="max-width: 320px; flex-shrink:0;">
-                                                <button type="button" class="segment-btn active" id="sellModeBtnLoose" onclick="setSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
-                                                <button type="button" class="segment-btn" id="sellModeBtnPrepacked" onclick="setSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
-                                            </div>
-                                            <div id="sellModeHint" style="font-size:11px; color:#999; flex:1; min-width:200px;"></div>
-                                        </div>
-                                        <input type="hidden" id="productSellMode" value="loose">
+                                        <select id="productSellMode" onchange="onSellModeChange()">
+                                            <option value="loose">Pack on demand — weighed/counted per customer at counter</option>
+                                            <option value="prepacked">Fixed unit — sold as a single sealed piece, no packing step</option>
+                                        </select>
+                                        <div id="sellModeHint" style="font-size:11px; color:#999; margin-top:4px;"></div>
                                     </div>
                                     <div class="form-field">
                                         <label id="productCostPriceLabel">Cost Price (৳ / pcs)</label>
@@ -1217,8 +1166,8 @@
                                         </div>
                                         <div id="emojiSuggestRow" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;"></div>
                                     </div>
+                                    <button type="button" class="btn-add-product" onclick="addProduct()">Add</button>
                                 </div>
-                                <button type="button" class="btn-add-product" style="margin-top: 14px;" onclick="addProduct()">Add</button>
                                 <div id="emojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
                             </div>
                         </div>
@@ -1271,9 +1220,7 @@
                             <h3 style="color: #185FA5; margin: 0;"><i class="fas fa-chart-line"></i> Sales Trend (Last 7 Days)</h3>
                             <div>
                                 <button class="btn-edit" onclick="exportSalesCSV()"><i class="fas fa-file-csv"></i> Export Sales CSV</button>
-                                <button class="btn-edit" onclick="exportSalesExcel()"><i class="fas fa-file-excel"></i> Export Sales Excel</button>
                                 <button class="btn-edit" onclick="exportStockCSV()"><i class="fas fa-file-csv"></i> Export Stock CSV</button>
-                                <button class="btn-edit" onclick="exportStockExcel()"><i class="fas fa-file-excel"></i> Export Stock Excel</button>
                             </div>
                         </div>
                         <canvas id="salesChart" height="90"></canvas>
@@ -1337,7 +1284,6 @@
                                         <th>Counted</th>
                                         <th>Difference</th>
                                         <th>By</th>
-                                        <th></th>
                                     </tr>
                                 </thead>
                                 <tbody id="reconciliationHistoryBody"></tbody>
@@ -1367,7 +1313,6 @@
                         </div>
 
                         <button class="btn-edit" onclick="exportPurchasesCSV()"><i class="fas fa-file-csv"></i> Export Purchase History CSV</button>
-                        <button class="btn-edit" onclick="exportPurchasesExcel()"><i class="fas fa-file-excel"></i> Export Purchase History Excel</button>
                         <div style="max-height: 240px; overflow-y: auto; margin-top:10px;">
                             <table class="products-table">
                                 <thead>
@@ -1444,29 +1389,6 @@
                             </table>
                         </div>
                     </div>
-
-                    <div class="products-container" style="margin-top:16px;">
-                        <h3 style="color: #185FA5; margin-bottom: 8px;"><i class="fas fa-truck-loading"></i> Reorder Suggestions</h3>
-                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
-                            <label style="font-size:12px; color:#666;">Based on sales over the last
-                                <input type="number" id="reorderLookbackDays" value="14" min="1" max="90" style="width:60px;" onchange="loadReorderSuggestions()"> days,
-                                assuming a
-                                <input type="number" id="reorderLeadDays" value="7" min="1" max="60" style="width:60px;" onchange="loadReorderSuggestions()"> day restock lead time.
-                            </label>
-                        </div>
-                        <p style="font-size:11px; color:#999; margin-bottom:8px;">Estimated from each product's average daily sales — a rough guide, not a guarantee (seasonal items, promotions, or short sales histories can throw this off).</p>
-                        <table class="products-table">
-                            <thead>
-                                <tr>
-                                    <th>Product</th>
-                                    <th>Avg. Daily Sales</th>
-                                    <th>Current Stock</th>
-                                    <th>Suggested Reorder</th>
-                                </tr>
-                            </thead>
-                            <tbody id="reorderSuggestionsBody"></tbody>
-                        </table>
-                    </div>
                 </div>
 
                 <!-- ADMIN PANEL -->
@@ -1517,9 +1439,6 @@
                             <button type="button" class="btn-add-product" onclick="migrateLocalDataToSupabase()">
                                 <i class="fas fa-upload"></i> Migrate All Local Data to Supabase
                             </button>
-                            <button type="button" class="btn-add-product" style="margin-top:8px; background:#555;" onclick="debugCheckPasswordSync()">
-                                <i class="fas fa-bug"></i> TEMP: Check All Users for Password Sync Issues
-                            </button>
                         </div>
 
                         <!-- Low Stock Settings -->
@@ -1540,22 +1459,6 @@
                                 <input type="number" id="sessionTimeoutMinutes" value="5" min="0" onchange="updateSessionTimeout()">
                             </div>
                             <p style="font-size: 12px; color: #999;">Anyone left logged in on an unattended till is automatically signed out after this many minutes of no clicks, key presses, or touches.</p>
-                        </div>
-
-                        <!-- Active Sessions -->
-                        <div class="admin-card">
-                            <h4><i class="fas fa-users"></i> Currently Logged In</h4>
-                            <p style="font-size:12px; color:#999; margin-bottom:8px;">Each user can only have one active session at a time — logging in anywhere ends any other one automatically. This just shows who currently has one, and lets you force one out early if needed.</p>
-                            <button type="button" class="btn-add-product" style="margin-bottom:10px;" onclick="loadActiveSessions()"><i class="fas fa-sync"></i> Refresh</button>
-                            <div id="activeSessionsBody"></div>
-                        </div>
-
-                        <!-- Client Errors -->
-                        <div class="admin-card">
-                            <h4><i class="fas fa-bug"></i> Recent App Errors</h4>
-                            <p style="font-size:12px; color:#999; margin-bottom:8px;">Uncaught errors from any device running this app land here automatically — useful for spotting a bug before staff describe it to you.</p>
-                            <button type="button" class="btn-add-product" style="margin-bottom:10px;" onclick="loadClientErrors()"><i class="fas fa-sync"></i> Refresh</button>
-                            <div id="clientErrorsBody"></div>
                         </div>
 
                         <!-- Login Page Customization -->
@@ -1651,10 +1554,7 @@
                         <div class="admin-card" style="grid-column: 1 / -1;">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                                 <h4 style="margin-bottom:0; border-bottom:none; padding-bottom:0;"><i class="fas fa-clipboard-list"></i> Audit Log <span style="font-size:11px; color:#999; font-weight:400;">(showing last 50 · retained 1 year)</span></h4>
-                                <div>
-                                    <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log CSV</button>
-                                    <button class="btn-edit" onclick="exportAuditLogExcel()"><i class="fas fa-file-excel"></i> Export Full Log Excel</button>
-                                </div>
+                                <button class="btn-edit" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> Export Full Log (Excel)</button>
                             </div>
                             <div style="border-bottom: 2px solid #BA7517; margin: 10px 0 14px;"></div>
                             <div id="auditLogBody" style="max-height: 280px; overflow-y: auto; font-size: 12px;"></div>
@@ -1693,11 +1593,10 @@
                 </div>
                 <div class="form-field">
                     <label>Sold As</label>
-                    <div class="segmented-toggle">
-                        <button type="button" class="segment-btn active" id="editSellModeBtnLoose" onclick="setEditSellMode('loose')"><i class="fas fa-weight-hanging"></i> Pack on Demand</button>
-                        <button type="button" class="segment-btn" id="editSellModeBtnPrepacked" onclick="setEditSellMode('prepacked')"><i class="fas fa-box"></i> Fixed Unit</button>
-                    </div>
-                    <input type="hidden" id="editSellMode" value="loose">
+                    <select id="editSellMode">
+                        <option value="loose">Pack on demand — weighed/counted at counter</option>
+                        <option value="prepacked">Fixed unit — sold as a single sealed piece</option>
+                    </select>
                 </div>
                 <div class="form-field">
                     <label id="editCostPriceLabel">Cost Price (৳)</label>
@@ -1861,12 +1760,6 @@
         // create_session/resolve_session in supabase_permissions_part4_sessions.sql.
         let currentSessionToken = null;
         let pendingPasswordUpgradeUserId = null;
-        // The user's OLD (pre-upgrade) hash — this is what Supabase still has on
-        // file, so it's what we must authenticate the FIRST session with. Only
-        // after that session exists can self_update_password_hash push the new
-        // hash up; authenticating with the already-upgraded local hash would
-        // never match Supabase's still-old copy and would permanently fail.
-        let pendingPasswordUpgradeOldHash = null;
 
         function isSupabaseConfigured() {
             return SUPABASE_URL && SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
@@ -1893,7 +1786,6 @@
             pack_weigh: 'Pack & Weigh Items',
             restock_purchase: 'Restock / Record Purchases',
             view_reports: 'View Reports',
-            reconcile_cash: 'Cash Drawer Reconciliation',
             admin: 'Full Admin Access'
         };
 
@@ -2010,57 +1902,6 @@
                 (value.startsWith(PASSWORD_HASH_PREFIX) || value.startsWith(LEGACY_HASH_PREFIX));
         }
 
-        // Escapes free-text fields (product/user/supplier names, notes, ids, etc.)
-        // before they're interpolated into innerHTML template strings. Without
-        // this, anyone able to enter a product name, user name, supplier, or
-        // note field could store an HTML/script payload that executes in
-        // whoever's browser later renders that list (a stored XSS path) —
-        // this app has several roles that can create/edit that kind of data,
-        // so every such field needs this before hitting innerHTML.
-        function escapeHtml(value) {
-            if (value === null || value === undefined) return '';
-            return String(value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // ===== CLIENT-SIDE ERROR CAPTURE =====
-        // Sends uncaught errors and unhandled promise rejections to Supabase
-        // (log_client_error RPC) so bugs surface without needing someone to
-        // screenshot DevTools. Best-effort only — if this itself fails
-        // (offline, RPC missing), it just gives up silently; it must never
-        // be able to cause a second error of its own.
-        function reportClientError(message, stack, meta) {
-            try {
-                console.error('[captured]', message, stack || '');
-                if (!supabaseClient || !supabaseConnected) return;
-                const entryId = 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-                supabaseClient.rpc('log_client_error', {
-                    p_entry_id: entryId,
-                    p_session_token: (typeof currentSessionToken !== 'undefined') ? currentSessionToken : null,
-                    p_message: String(message).slice(0, 2000),
-                    p_stack: stack ? String(stack).slice(0, 4000) : null,
-                    p_url: location.href,
-                    p_meta: meta || null
-                }).then(() => {}, () => {});
-            } catch (e) {
-                // Swallow — error reporting must never itself throw.
-            }
-        }
-
-        window.addEventListener('error', (event) => {
-            reportClientError(event.message, event.error && event.error.stack, { type: 'error', line: event.lineno, col: event.colno });
-        });
-        window.addEventListener('unhandledrejection', (event) => {
-            const reason = event.reason;
-            const message = reason && reason.message ? reason.message : String(reason);
-            const stack = reason && reason.stack ? reason.stack : null;
-            reportClientError(message, stack, { type: 'unhandledrejection' });
-        });
-
         // Returns { valid, needsUpgrade } instead of a bare boolean so callers can
         // transparently re-hash and persist with the new algorithm the moment an
         // old-format account successfully logs in — no forced "reset your password"
@@ -2092,7 +1933,7 @@
             ],
             users: [
                 { id: 'admin', name: 'Administrator', password: hashPassword('1234'), role: 'admin',
-                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','reconcile_cash','admin'] },
+                  permissions: ['pos','add_product','edit_price','edit_stock','delete_product','delete_sales','process_refund','pack_weigh','restock_purchase','view_reports','admin'] },
                 { id: 'scanner', name: 'Scanner Operator', password: hashPassword('1234'), role: 'scanner',
                   permissions: ['view_reports'] },
                 { id: 'cashier', name: 'Cashier', password: hashPassword('1234'), role: 'cashier',
@@ -2348,10 +2189,10 @@
             };
         }
         function auditToRow(a) {
-            return { id: String(a.id), log_timestamp: new Date(a.timestamp).toISOString(), app_user: a.user, action: a.action, details: a.details || null, meta: a.meta || null };
+            return { id: String(a.id), log_timestamp: new Date(a.timestamp).toISOString(), app_user: a.user, action: a.action, details: a.details || null };
         }
         function rowToAudit(r) {
-            return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '', meta: r.meta || null };
+            return { id: r.id, timestamp: new Date(r.log_timestamp).getTime(), time: new Date(r.log_timestamp).toLocaleString(), user: r.app_user, action: r.action, details: r.details || '' };
         }
 
         // Background incremental sync — only pushes tables that still allow direct
@@ -2444,50 +2285,8 @@
             }
         }
 
-        // TEMPORARY DIAGNOSTIC — remove once you've confirmed every user's
-        // password is in sync. Compares each local user's password hash
-        // against what Supabase actually has on file. Any mismatch here
-        // means that user cannot establish a real server session on any
-        // device until it's fixed (via the Password button, now that it
-        // syncs properly, or by having them use "Forgot password").
-        async function debugCheckPasswordSync() {
-            if (!supabaseClient) { alert('supabaseClient is not initialized.'); return; }
-            try {
-                const { data: rows, error } = await supabaseClient
-                    .from('app_users')
-                    .select('id, password_hash');
-                if (error) throw error;
-
-                const remoteById = {};
-                rows.forEach(r => { remoteById[r.id] = r.password_hash; });
-
-                let report = 'Password sync check:\n\n';
-                let mismatchCount = 0;
-
-                DB.users.forEach(u => {
-                    const remoteHash = remoteById[u.id];
-                    if (remoteHash === undefined) {
-                        report += `⚠ "${u.id}" — exists locally but NOT in Supabase at all\n`;
-                        mismatchCount++;
-                    } else if (remoteHash !== u.password) {
-                        report += `✗ "${u.id}" — MISMATCH (will fail to get a session)\n`;
-                        mismatchCount++;
-                    } else {
-                        report += `✓ "${u.id}" — in sync\n`;
-                    }
-                });
-
-                report += `\n${mismatchCount} user(s) out of ${DB.users.length} need fixing.`;
-                if (mismatchCount > 0) {
-                    report += `\n\nFix each one by using the "Password" button next to them in the Users list (now that it properly syncs to Supabase), or have them use "Forgot password".`;
-                }
-
-                console.log(report);
-                alert(report);
-            } catch (e) {
-                alert('Could not run check: ' + (e.message || e));
-            }
-        }
+        // Pull the current state of every shared table from Supabase into the
+        // in-memory DB object. Called once on startup after connecting.
         async function pullAllFromSupabase() {
             if (!supabaseClient) return;
 
@@ -2715,47 +2514,25 @@
         async function establishSupabaseSession() {
             if (!supabaseClient || !DB.currentUser) return;
             try {
-                // If a password-hash upgrade is pending for this user, Supabase
-                // still has the OLD hash on file — authenticate with that first.
-                // Sending the already-upgraded local hash here would never match
-                // and would permanently lock the session out (that was the bug).
-                const isPendingUpgrade = pendingPasswordUpgradeUserId === DB.currentUser.id
-                    && pendingPasswordUpgradeOldHash;
-                const hashForAuth = isPendingUpgrade
-                    ? pendingPasswordUpgradeOldHash
-                    : DB.currentUser.password;
-
-                const { device, browser } = detectDeviceBrowser();
                 const { data, error } = await supabaseClient.rpc('create_session', {
                     p_user_id: DB.currentUser.id,
-                    p_password_hash: hashForAuth,
-                    p_device: device,
-                    p_browser: browser
+                    p_password_hash: DB.currentUser.password
                 });
                 if (error || !data?.success) {
                     console.warn('Could not establish a server session — admin/staff actions requiring elevated permissions will be unavailable until this succeeds', error || data?.error);
                     currentSessionToken = null;
-                    // A lockout is the one case worth telling the user about
-                    // directly — everything else (network hiccup, etc.) just
-                    // silently falls back to local-only mode as before.
-                    if (data?.error && /too many failed attempts/i.test(data.error)) {
-                        alert(data.error);
-                    }
                     return;
                 }
                 currentSessionToken = data.token;
 
                 // If this login just transparently upgraded an old password hash,
                 // push the new hash up now that we have a valid session to do it with.
-                if (isPendingUpgrade) {
+                if (pendingPasswordUpgradeUserId === DB.currentUser.id) {
                     const { error: upgradeError } = await supabaseClient.rpc('self_update_password_hash', {
                         p_session_token: currentSessionToken,
                         p_new_hash: DB.currentUser.password
                     });
-                    if (!upgradeError) {
-                        pendingPasswordUpgradeUserId = null;
-                        pendingPasswordUpgradeOldHash = null;
-                    }
+                    if (!upgradeError) pendingPasswordUpgradeUserId = null;
                 }
             } catch (e) {
                 console.warn('Could not establish a server session', e);
@@ -2765,43 +2542,10 @@
 
         const AUDIT_LOG_RETENTION_DAYS = 365;
 
-        // Lightweight context captured alongside every audit entry — not
-        // exhaustive tracking, just enough to answer "what role did this
-        // user hold at the time" (useful once permissions change later)
-        // and "roughly what device/browser did this come from" (useful
-        // for spotting an unexpected session, e.g. an admin action from
-        // an unfamiliar browser). No IP capture — the browser has no
-        // reliable way to know its own public IP without a third-party
-        // call, and this app doesn't proxy requests through its own server.
-        // Shared by getAuditMeta() and session creation — not exhaustive
-        // UA sniffing, just enough to label "roughly what this is."
-        function detectDeviceBrowser() {
-            const ua = navigator.userAgent || '';
-            const isMobile = /Mobi|Android|iPhone|iPad/i.test(ua);
-            let browser = 'Unknown';
-            if (ua.includes('Edg/')) browser = 'Edge';
-            else if (ua.includes('Chrome/') && !ua.includes('Chromium')) browser = 'Chrome';
-            else if (ua.includes('Firefox/')) browser = 'Firefox';
-            else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
-            return { device: isMobile ? 'mobile' : 'desktop', browser };
-        }
-
-        function getAuditMeta() {
-            const { device, browser } = detectDeviceBrowser();
-            return {
-                role: DB.currentUser ? DB.currentUser.role : null,
-                permissions: DB.currentUser ? DB.currentUser.permissions : null,
-                device,
-                browser,
-                platform: navigator.platform || null
-            };
-        }
-
         function logAudit(action, details) {
             const now = Date.now();
             const entryId = String(now + Math.random());
             const userId = DB.currentUser ? DB.currentUser.id : 'system';
-            const meta = DB.currentUser ? getAuditMeta() : null;
 
             DB.auditLog.push({
                 id: entryId,
@@ -2809,8 +2553,7 @@
                 time: new Date(now).toLocaleString(),
                 user: userId,
                 action,
-                details,
-                meta
+                details
             });
             pruneAuditLog();
             saveDB();
@@ -2818,27 +2561,17 @@
             // Fire-and-forget: every action in the app calls logAudit synchronously
             // and doesn't expect a Promise back, so the actual write to Supabase
             // happens in the background rather than making logAudit itself async.
-            // .then(onSuccess, onFailure) — not .then(onSuccess) alone — so a
-            // rejected request (network drop mid-write) doesn't surface as an
-            // unhandled promise rejection; it's already handled by falling
-            // back to the local-only copy above.
             if (supabaseConnected) {
                 supabaseClient.rpc('write_audit_log', {
                     p_entry_id: entryId,
                     p_session_token: userId === 'system' ? null : currentSessionToken,
                     p_action: action,
-                    p_details: details || null,
-                    p_meta: meta
-                }).then(
-                    ({ data, error }) => {
-                        if (error || !data?.success) {
-                            console.error('Audit log write to Supabase failed (kept locally)', error || data?.error);
-                        }
-                    },
-                    (err) => {
-                        console.error('Audit log write to Supabase failed (kept locally)', err);
+                    p_details: details || null
+                }).then(({ data, error }) => {
+                    if (error || !data?.success) {
+                        console.error('Audit log write to Supabase failed (kept locally)', error || data?.error);
                     }
-                );
+                });
             }
         }
 
@@ -2876,10 +2609,6 @@
                     // Correct password on an old-format hash — move it onto the
                     // stronger algorithm now, transparently. establishSupabaseSession()
                     // pushes this up to Supabase once a session is available.
-                    // Keep the OLD hash around: Supabase still has it on file, and
-                    // it's what the first create_session call must authenticate
-                    // with — sending the already-upgraded hash would never match.
-                    pendingPasswordUpgradeOldHash = user.password;
                     user.password = hashPassword(password);
                     pendingPasswordUpgradeUserId = user.id;
                 }
@@ -2954,16 +2683,11 @@
             lastActivityTime = Date.now();
         }
 
-        let activityListenersAttached = false;
-
         function startSessionTimeoutTracking() {
             lastActivityTime = Date.now();
-            if (!activityListenersAttached) {
-                ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
-                    document.addEventListener(evt, recordActivity, { passive: true });
-                });
-                activityListenersAttached = true;
-            }
+            ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
+                document.addEventListener(evt, recordActivity, { passive: true });
+            });
 
             if (sessionTimeoutInterval) clearInterval(sessionTimeoutInterval);
             sessionTimeoutInterval = setInterval(() => {
@@ -2982,12 +2706,6 @@
             if (sessionTimeoutInterval) {
                 clearInterval(sessionTimeoutInterval);
                 sessionTimeoutInterval = null;
-            }
-            if (activityListenersAttached) {
-                ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(evt => {
-                    document.removeEventListener(evt, recordActivity, { passive: true });
-                });
-                activityListenersAttached = false;
             }
         }
 
@@ -3031,7 +2749,7 @@
 
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
-            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); loadActiveSessions(); loadClientErrors(); }
+            if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); }
             if (section === 'reports') { renderSalesChart(); loadReconciliationHistory(); }
         }
 
@@ -3044,11 +2762,8 @@
 
             if (supabaseClient && currentSessionToken) {
                 // Best-effort — don't block logout on this, and don't care if it fails
-                // (the token also expires on its own server-side). Using .then(ok, fail)
-                // instead of .catch() here: supabase-js's rpc() builder is only a
-                // "thenable" until awaited/then()'d — it has no standalone .catch()
-                // method, so calling .catch() directly on it throws a TypeError.
-                supabaseClient.rpc('end_session', { p_session_token: currentSessionToken }).then(() => {}, () => {});
+                // (the token also expires on its own server-side).
+                supabaseClient.rpc('end_session', { p_session_token: currentSessionToken }).catch(() => {});
             }
             currentSessionToken = null;
 
@@ -3193,10 +2908,6 @@
                 alert('User ID and Password are required');
                 return;
             }
-            if (!/^[a-zA-Z0-9_.-]{1,40}$/.test(id)) {
-                alert('User ID can only contain letters, numbers, dots, underscores, and hyphens (no spaces or other characters).');
-                return;
-            }
             if (DB.users.find(u => u.id === id)) {
                 alert('A user with this ID already exists');
                 return;
@@ -3224,8 +2935,8 @@
                 return `
                 <div class="user-card-row">
                     <div>
-                        <div class="uname">${escapeHtml(u.name || u.id)} <span style="color:#999; font-weight:400;">(${escapeHtml(u.id)})</span></div>
-                        <div class="urole">${escapeHtml(u.role.toUpperCase())} · ${u.permissions.length} permission(s)</div>
+                        <div class="uname">${u.name || u.id} <span style="color:#999; font-weight:400;">(${u.id})</span></div>
+                        <div class="urole">${u.role.toUpperCase()} · ${u.permissions.length} permission(s)</div>
                     </div>
                     <div>
                         <button class="btn-small edit" onclick="openPermEditor('${u.id}')"><i class="fas fa-key"></i> Permissions</button>
@@ -3236,35 +2947,14 @@
             `}).join('');
         }
 
-        async function changePassword(userId) {
+        function changePassword(userId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const user = DB.users.find(u => u.id === userId);
             if (!user) return;
             const newPass = prompt(`Set new password for "${user.name || user.id}":`);
             if (newPass === null) return;
             if (!newPass.trim()) { alert('Password cannot be empty'); return; }
-
-            const newHash = hashPassword(newPass.trim());
-
-            if (supabaseConnected) {
-                try {
-                    const { data, error } = await supabaseClient.rpc('admin_set_password', {
-                        p_session_token: currentSessionToken,
-                        p_target_user_id: userId,
-                        p_new_password_hash: newHash
-                    });
-                    if (error) throw error;
-                    if (!data || !data.success) {
-                        alert(data?.error || 'Password change was rejected by the server.');
-                        return;
-                    }
-                } catch (e) {
-                    console.error('Server-side password change failed, applying locally only', e);
-                    alert('Could not reach shared accounts — changing password locally only. This user will not be able to establish a server session on any device until this syncs.');
-                }
-            }
-
-            user.password = newHash;
+            user.password = hashPassword(newPass.trim());
             logAudit('password_changed', `Password changed for "${userId}"`);
             saveDB();
             alert(`✓ Password updated for ${user.id}`);
@@ -3571,8 +3261,8 @@
 
             grid.innerHTML = filtered.map(p => `
                 <div class="product-card" onclick="addToCart(${p.id})">
-                    <div class="product-icon">${escapeHtml(p.icon)}</div>
-                    <div class="product-name">${escapeHtml(p.name)}</div>
+                    <div class="product-icon">${p.icon}</div>
+                    <div class="product-name">${p.name}</div>
                     <div class="product-stock ${p.stock <= DB.settings.lowStockThreshold ? 'low' : ''}">Stock: ${formatQty(p.stock, p.unit)} ${p.unit}</div>
                     <div class="product-price">৳ ${p.price.toFixed(2)} / ${p.unit}</div>
                     ${p.sellMode === 'loose' && hasPerm('pack_weigh') ? `<button class="btn-edit" style="margin-top:6px; width:100%; background:#8e44ad;" onclick="event.stopPropagation(); openPackLabelDialog(${p.id})"><i class="fas ${packButtonLabel(p.unit).icon}"></i> ${packButtonLabel(p.unit).text}</button>` : ''}
@@ -3584,9 +3274,9 @@
             const tbody = document.getElementById('productsTableBody');
             tbody.innerHTML = DB.products.map((p, idx) => `
                 <tr>
-                    <td>${escapeHtml(p.icon)}</td>
-                    <td>${escapeHtml(p.name)}</td>
-                    <td style="font-family: monospace; font-size: 11px;">${escapeHtml(p.barcode)}</td>
+                    <td>${p.icon}</td>
+                    <td>${p.name}</td>
+                    <td style="font-family: monospace; font-size: 11px;">${p.barcode}</td>
                     <td>৳ ${p.price.toFixed(2)} / ${p.unit}</td>
                     <td>
                         ${formatQty(p.stock, p.unit)} ${p.unit}
@@ -3748,22 +3438,6 @@
             onSellModeChange();
         }
 
-        // Drives the segmented "Sold As" toggle: updates the hidden value
-        // input (so addProduct()'s existing read of #productSellMode.value
-        // doesn't need to change at all) and the active/inactive button styling.
-        function setSellMode(mode) {
-            document.getElementById('productSellMode').value = mode;
-            document.getElementById('sellModeBtnLoose').classList.toggle('active', mode === 'loose');
-            document.getElementById('sellModeBtnPrepacked').classList.toggle('active', mode === 'prepacked');
-            onSellModeChange();
-        }
-
-        function setEditSellMode(mode) {
-            document.getElementById('editSellMode').value = mode;
-            document.getElementById('editSellModeBtnLoose').classList.toggle('active', mode === 'loose');
-            document.getElementById('editSellModeBtnPrepacked').classList.toggle('active', mode === 'prepacked');
-        }
-
         function onSellModeChange() {
             const unit = document.getElementById('productUnit').value;
             const sellMode = document.getElementById('productSellMode').value;
@@ -3811,8 +3485,6 @@
             document.getElementById('productBarcode').value = '';
             document.getElementById('productUnit').value = 'pcs';
             document.getElementById('productSellMode').value = 'loose';
-            document.getElementById('sellModeBtnLoose').classList.add('active');
-            document.getElementById('sellModeBtnPrepacked').classList.remove('active');
             onUnitChange();
             document.getElementById('productCostPrice').value = '';
             document.getElementById('productPrice').value = '';
@@ -3846,7 +3518,7 @@
             document.getElementById('editName').value = product.name;
             document.getElementById('editBarcode').value = product.barcode;
             document.getElementById('editUnit').value = product.unit || 'pcs';
-            setEditSellMode(product.sellMode || 'loose');
+            document.getElementById('editSellMode').value = product.sellMode || 'loose';
             document.getElementById('editCostPrice').value = product.costPrice || 0;
             document.getElementById('editPrice').value = product.price;
             document.getElementById('editIcon').value = product.icon || '📦';
@@ -4408,7 +4080,7 @@
 
             document.getElementById('invoicePaper').innerHTML = `
                 <div style="text-align:center; padding: 10px 0;">
-                    <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${escapeHtml(product.icon)} ${escapeHtml(product.name)}</div>
+                    <div style="font-size:14px; font-weight:700; margin-bottom:2px;">${product.icon} ${product.name}</div>
                     <div style="font-size:12px; color:#555; margin-bottom:6px;">${labelLine}</div>
                     <div style="font-size:16px; font-weight:700; margin-bottom:10px;">৳ ${price.toFixed(2)}</div>
                     <svg id="barcodeSvg" style="max-width:100%;"></svg>
@@ -4505,17 +4177,17 @@
                 resultDiv.innerHTML = `
                     <div style="color: #27ae60; padding: 12px; background: #f0f8f4; border-radius: 6px;">
                         <strong>✓ VALID</strong><br><br>
-                        Product: ${escapeHtml(product.icon)} ${escapeHtml(product.name)}<br>
+                        Product: ${product.icon} ${product.name}<br>
                         Price: ৳${product.price.toFixed(2)}<br>
                         Stock: ${product.stock}<br>
-                        Barcode: ${escapeHtml(product.barcode)}
+                        Barcode: ${product.barcode}
                     </div>
                 `;
             } else {
                 resultDiv.innerHTML = `
                     <div style="color: #e74c3c; padding: 12px; background: #fff5f5; border-radius: 6px;">
                         <strong>✗ NOT FOUND</strong><br><br>
-                        Barcode: ${escapeHtml(barcode)}<br>
+                        Barcode: ${barcode}<br>
                         Status: Not in database
                     </div>
                 `;
@@ -4528,8 +4200,8 @@
 
             list.innerHTML = DB.products.map(p => `
                 <div style="padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
-                    <div style="font-weight: 600;">${escapeHtml(p.icon)} ${escapeHtml(p.name)}</div>
-                    <div style="color: #666; font-size: 11px; font-family: monospace;">📌 ${escapeHtml(p.barcode)}</div>
+                    <div style="font-weight: 600;">${p.icon} ${p.name}</div>
+                    <div style="color: #666; font-size: 11px; font-family: monospace;">📌 ${p.barcode}</div>
                 </div>
             `).join('');
         }
@@ -4615,7 +4287,7 @@
                 return `
                 <div class="cart-item">
                     <div class="cart-item-left">
-                        <div class="cart-item-name">${escapeHtml(item.icon)} ${escapeHtml(item.name)} <span style="color:#999; font-size:10px;">(${escapeHtml(item.unit)})</span>${isPacked ? ` <span style="color:#8e44ad; font-size:10px;">📦 ${escapeHtml(item.packLabel)}</span>` : ''}</div>
+                        <div class="cart-item-name">${item.icon} ${item.name} <span style="color:#999; font-size:10px;">(${item.unit})</span>${isPacked ? ` <span style="color:#8e44ad; font-size:10px;">📦 ${item.packLabel}</span>` : ''}</div>
                         <div class="cart-item-qty">
                             ${isPacked
                                 ? `<span style="font-size:12px; color:#666;">${formatQty(item.quantity, item.unit)} ${item.unit} (fixed)</span>`
@@ -4755,14 +4427,14 @@
 
             list.innerHTML = held.map(h => {
                 const total = h.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-                const itemSummary = h.cart.map(i => `${escapeHtml(i.name)} x${formatQty(i.quantity, i.unit || 'pcs')}${escapeHtml(i.unit || 'pcs')}`).join(', ');
+                const itemSummary = h.cart.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ');
                 const minutesAgo = Math.floor((Date.now() - h.heldAt) / 60000);
                 return `
                     <div class="user-card-row" style="align-items:flex-start;">
                         <div>
-                            <div class="uname">${escapeHtml(h.note) || '(no note)'} <span style="color:#999; font-weight:400;">· ৳${total.toFixed(2)}</span></div>
+                            <div class="uname">${h.note || '(no note)'} <span style="color:#999; font-weight:400;">· ৳${total.toFixed(2)}</span></div>
                             <div class="urole">${itemSummary}</div>
-                            <div class="urole">Held by ${escapeHtml(h.heldBy)} · ${minutesAgo < 1 ? 'just now' : minutesAgo + ' min ago'}</div>
+                            <div class="urole">Held by ${h.heldBy} · ${minutesAgo < 1 ? 'just now' : minutesAgo + ' min ago'}</div>
                         </div>
                         <div>
                             <button class="btn-small edit" onclick="recallHeldSale('${h.id}')"><i class="fas fa-undo"></i> Recall</button>
@@ -5065,16 +4737,16 @@
 
             const itemsHtml = sale.items.map(i => `
                 <tr>
-                    <td>${escapeHtml(i.icon || '')} ${escapeHtml(i.name)}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${formatQty(i.returnedQty, i.unit || 'pcs')} ${escapeHtml(i.unit || 'pcs')} returned)</span>` : ''}</td>
-                    <td class="num">${formatQty(i.quantity, i.unit || 'pcs')} ${escapeHtml(i.unit || 'pcs')}</td>
+                    <td>${i.icon || ''} ${i.name}${i.returnedQty ? ` <span style="color:#e74c3c; font-size:10px;">(${formatQty(i.returnedQty, i.unit || 'pcs')} ${i.unit || 'pcs'} returned)</span>` : ''}</td>
+                    <td class="num">${formatQty(i.quantity, i.unit || 'pcs')} ${i.unit || 'pcs'}</td>
                     <td class="num">${i.price.toFixed(2)}</td>
                     <td class="num">${(i.price * i.quantity).toFixed(2)}</td>
                 </tr>
             `).join('');
 
             const logoHtml = (s.shopLogo || '').startsWith('http')
-                ? `<img src="${escapeHtml(s.shopLogo)}" style="max-height:48px; max-width:140px;" alt="logo">`
-                : `<div class="invoice-shop-logo">${escapeHtml(s.shopLogo || '🛒')}</div>`;
+                ? `<img src="${s.shopLogo}" style="max-height:48px; max-width:140px;" alt="logo">`
+                : `<div class="invoice-shop-logo">${s.shopLogo || '🛒'}</div>`;
 
             const statusBadge = sale.status === 'refunded'
                 ? '<div style="text-align:center; color:#e74c3c; font-weight:700; margin-bottom:8px;">⟲ FULLY REFUNDED</div>'
@@ -5085,19 +4757,19 @@
             document.getElementById('invoicePaper').innerHTML = `
                 <div class="invoice-shop-header">
                     ${logoHtml}
-                    <div class="invoice-shop-name">${escapeHtml(s.shopName || 'My Shop')}</div>
+                    <div class="invoice-shop-name">${s.shopName || 'My Shop'}</div>
                     <div class="invoice-shop-meta">
-                        ${s.shopAddress ? escapeHtml(s.shopAddress) + '<br>' : ''}
-                        ${s.shopPhone ? 'Tel: ' + escapeHtml(s.shopPhone) : ''}
+                        ${s.shopAddress ? s.shopAddress + '<br>' : ''}
+                        ${s.shopPhone ? 'Tel: ' + s.shopPhone : ''}
                     </div>
                 </div>
                 <div class="invoice-divider"></div>
                 ${statusBadge}
-                <div class="invoice-meta-row"><span>Invoice No:</span><strong>${escapeHtml(sale.invoiceNo || '—')}</strong></div>
+                <div class="invoice-meta-row"><span>Invoice No:</span><strong>${sale.invoiceNo || '—'}</strong></div>
                 <div class="invoice-meta-row"><span>Date:</span><span>${sale.date}</span></div>
-                <div class="invoice-meta-row"><span>Cashier:</span><span>${escapeHtml(sale.cashier)}</span></div>
-                ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${escapeHtml(sale.paymentMethod)}</span></div>` : ''}
-                ${sale.transactionId ? `<div class="invoice-meta-row"><span>Txn ID:</span><strong>${escapeHtml(sale.transactionId)}</strong></div>` : ''}
+                <div class="invoice-meta-row"><span>Cashier:</span><span>${sale.cashier}</span></div>
+                ${sale.paymentMethod ? `<div class="invoice-meta-row"><span>Payment:</span><span>${sale.paymentMethod}</span></div>` : ''}
+                ${sale.transactionId ? `<div class="invoice-meta-row"><span>Txn ID:</span><strong>${sale.transactionId}</strong></div>` : ''}
                 <div class="invoice-divider"></div>
                 <table class="invoice-items-table">
                     <thead>
@@ -5116,7 +4788,7 @@
                         <div class="row"><span>Change</span><span>৳ ${(sale.change||0).toFixed(2)}</span></div>
                     ` : ''}
                 </div>
-                ${s.invoiceFooter ? `<div class="invoice-footer-note">${escapeHtml(s.invoiceFooter)}</div>` : ''}
+                ${s.invoiceFooter ? `<div class="invoice-footer-note">${s.invoiceFooter}</div>` : ''}
             `;
 
             currentPrintMode = 'invoice';
@@ -5243,9 +4915,9 @@
                     : s.status === 'partial_refund' ? ' <span style="color:#BA7517; font-size:10px;">(PARTIAL)</span>' : '';
                 return `
                 <tr>
-                    <td style="font-size: 11px;">${escapeHtml(s.invoiceNo || '')}<br>${s.date}${statusTag}</td>
-                    <td style="font-size: 11px;">${s.items.map(i => `${escapeHtml(i.name)} x${formatQty(i.quantity, i.unit || 'pcs')}${escapeHtml(i.unit || 'pcs')}`).join(', ')}<br><span style="color:#999;">by ${escapeHtml(s.cashier)}</span></td>
-                    <td style="font-size: 11px;">${escapeHtml(s.paymentMethod || 'Cash')}${s.transactionId ? `<br><span style="color:#999;">Txn: ${escapeHtml(s.transactionId)}</span>` : ''}</td>
+                    <td style="font-size: 11px;">${s.invoiceNo || ''}<br>${s.date}${statusTag}</td>
+                    <td style="font-size: 11px;">${s.items.map(i => `${i.name} x${formatQty(i.quantity, i.unit || 'pcs')}${i.unit || 'pcs'}`).join(', ')}<br><span style="color:#999;">by ${s.cashier}</span></td>
+                    <td style="font-size: 11px;">${s.paymentMethod || 'Cash'}${s.transactionId ? `<br><span style="color:#999;">Txn: ${s.transactionId}</span>` : ''}</td>
                     <td>৳ ${s.amount.toFixed(2)}</td>
                     <td>
                         <button class="btn-edit" onclick="reprintInvoice(${s.id})" title="Reprint"><i class="fas fa-print"></i></button>
@@ -5258,7 +4930,7 @@
             const stockTbody = document.getElementById('stockReportBody');
             stockTbody.innerHTML = DB.products.map(p => `
                 <tr>
-                    <td>${escapeHtml(p.icon)} ${escapeHtml(p.name)}</td>
+                    <td>${p.icon} ${p.name}</td>
                     <td><strong>${formatQty(p.stock, p.unit)} ${p.unit}</strong></td>
                     <td>${p.stock <= DB.settings.lowStockThreshold ? '<span style="color: #e74c3c;">⚠ Low</span>' : '<span style="color: #27ae60;">✓ OK</span>'}</td>
                 </tr>
@@ -5266,53 +4938,6 @@
 
             renderSalesChart();
             loadMarginAndPurchaseHistory();
-            loadReorderSuggestions();
-        }
-
-        // Estimates reorder needs from each product's average daily sales
-        // over a configurable lookback window, projected across a
-        // configurable restock lead time. Purely a client-side calculation
-        // against data already loaded — no new schema needed.
-        function loadReorderSuggestions() {
-            const tbody = document.getElementById('reorderSuggestionsBody');
-            if (!tbody) return;
-
-            const lookbackDaysEl = document.getElementById('reorderLookbackDays');
-            const leadDaysEl = document.getElementById('reorderLeadDays');
-            const lookbackDays = Math.max(1, parseInt(lookbackDaysEl?.value, 10) || 14);
-            const leadDays = Math.max(1, parseInt(leadDaysEl?.value, 10) || 7);
-            const cutoff = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-
-            const qtySoldByProduct = {};
-            DB.sales.forEach(s => {
-                if (s.id < cutoff) return; // sale ids are timestamps in this app
-                if (s.status === 'refunded') return;
-                s.items.forEach(item => {
-                    const returned = item.returnedQty || 0;
-                    const netQty = Math.max(0, item.quantity - returned);
-                    qtySoldByProduct[item.name] = (qtySoldByProduct[item.name] || 0) + netQty;
-                });
-            });
-
-            const rows = DB.products
-                .map(p => {
-                    const totalSold = qtySoldByProduct[p.name] || 0;
-                    const avgDaily = totalSold / lookbackDays;
-                    const projectedNeed = avgDaily * leadDays;
-                    const suggested = Math.max(0, projectedNeed - p.stock);
-                    return { p, avgDaily, suggested };
-                })
-                .filter(r => r.suggested > 0.01) // only show products actually worth reordering
-                .sort((a, b) => b.suggested - a.suggested);
-
-            tbody.innerHTML = rows.map(r => `
-                <tr>
-                    <td>${escapeHtml(r.p.icon)} ${escapeHtml(r.p.name)}</td>
-                    <td>${formatQty(r.avgDaily, r.p.unit)} ${escapeHtml(r.p.unit)}/day</td>
-                    <td>${formatQty(r.p.stock, r.p.unit)} ${escapeHtml(r.p.unit)}</td>
-                    <td><strong style="color:#BA7517;">${formatQty(r.suggested, r.p.unit)} ${escapeHtml(r.p.unit)}</strong></td>
-                </tr>
-            `).join('') || '<tr><td colspan="4" style="text-align:center; color:#999;">Nothing needs reordering based on recent sales — or there isn\'t enough sales history yet.</td></tr>';
         }
 
         function loadMarginAndPurchaseHistory() {
@@ -5384,7 +5009,7 @@
 
                 productMarginTbody.innerHTML = rows.map(p => `
                     <tr>
-                        <td>${escapeHtml(p.icon)} ${escapeHtml(p.name)}</td>
+                        <td>${p.icon} ${p.name}</td>
                         <td>${formatQty(p.qtySold, p.unit)} ${p.unit}</td>
                         <td>৳${p.revenue.toFixed(2)}</td>
                         <td>৳${p.cogs.toFixed(2)}</td>
@@ -5398,33 +5023,23 @@
             purchaseTbody.innerHTML = recentPurchases.map(p => `
                 <tr>
                     <td style="font-size:11px;">${p.date}</td>
-                    <td>${escapeHtml(p.productName)}</td>
+                    <td>${p.productName}</td>
                     <td>${formatQty(p.quantity, p.unit)} ${p.unit}</td>
                     <td>৳${p.costPrice.toFixed(2)}</td>
                     <td>৳${p.totalCost.toFixed(2)}</td>
-                    <td style="font-size:11px;">${escapeHtml(p.supplier) || '—'}</td>
+                    <td style="font-size:11px;">${p.supplier || '—'}</td>
                 </tr>
             `).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No restock history yet</td></tr>';
         }
 
-        function buildPurchasesExportRows() {
+        function exportPurchasesCSV() {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const rows = [['Date', 'Product', 'Quantity', 'Unit', 'Cost Price', 'Total Cost', 'Supplier', 'Notes', 'Added By']];
             DB.purchases.forEach(p => {
                 rows.push([p.date, p.productName, p.quantity, p.unit, p.costPrice.toFixed(2), p.totalCost.toFixed(2), p.supplier || '', p.notes || '', p.addedBy]);
             });
-            return rows;
-        }
-
-        function exportPurchasesCSV() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            downloadCSV(`purchase_history_${new Date().toISOString().slice(0,10)}.csv`, buildPurchasesExportRows());
+            downloadCSV(`purchase_history_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', 'Exported purchase history CSV');
-        }
-
-        function exportPurchasesExcel() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            downloadExcel(`purchase_history_${new Date().toISOString().slice(0,10)}.xlsx`, buildPurchasesExportRows(), 'Purchases');
-            logAudit('export', 'Exported purchase history Excel');
         }
 
         function reprintInvoice(saleId) {
@@ -5716,19 +5331,13 @@
             const body = document.getElementById('auditLogBody');
             if (!body) return;
             const recent = DB.auditLog.slice(-50).reverse();
-            body.innerHTML = recent.map(a => {
-                const m = a.meta;
-                const context = m
-                    ? ` <span style="color:#aaa; font-size:10px;">(${escapeHtml(m.role || '')}${m.device ? ' · ' + escapeHtml(m.device) : ''}${m.browser ? ' · ' + escapeHtml(m.browser) : ''})</span>`
-                    : '';
-                return `
+            body.innerHTML = recent.map(a => `
                 <div style="padding: 6px 0; border-bottom: 1px solid #f0f0f0;">
-                    <strong style="color:#185FA5;">${escapeHtml(a.user)}</strong>${context} · ${escapeHtml(a.action.replace(/_/g, ' '))}
+                    <strong style="color:#185FA5;">${a.user}</strong> · ${a.action.replace(/_/g, ' ')}
                     <span style="color:#999; float:right;">${a.time}</span>
-                    <div style="color:#666;">${escapeHtml(a.details || '')}</div>
+                    <div style="color:#666;">${a.details || ''}</div>
                 </div>
-            `;
-            }).join('') || '<p style="color:#999;">No activity yet.</p>';
+            `).join('') || '<p style="color:#999;">No activity yet.</p>';
         }
 
         // ===== TRASH BIN (soft-delete recovery) =====
@@ -5740,22 +5349,14 @@
             const items = DB.trash.slice().reverse();
             body.innerHTML = items.map(t => {
                 const daysLeft = Math.max(0, TRASH_RETENTION_DAYS - Math.floor((Date.now() - t.deletedAt) / (24*60*60*1000)));
-                let label, icon;
-                if (t.type === 'product') {
-                    label = `${escapeHtml(t.data.icon || '')} ${escapeHtml(t.data.name)} (barcode ${escapeHtml(t.data.barcode)})`;
-                    icon = '📦';
-                } else if (t.type === 'reconciliation') {
-                    label = `Cash reconciliation for ${escapeHtml(t.data.date)} — ৳${(t.data.difference || 0).toFixed(2)} diff`;
-                    icon = '🧮';
-                } else {
-                    label = `Sale ${escapeHtml(t.data.invoiceNo || '')} — ৳${(t.data.amount || 0).toFixed(2)}`;
-                    icon = '🧾';
-                }
+                const label = t.type === 'product'
+                    ? `${t.data.icon || ''} ${t.data.name} (barcode ${t.data.barcode})`
+                    : `Sale ${t.data.invoiceNo || ''} — ৳${(t.data.amount || 0).toFixed(2)}`;
                 return `
                     <div class="user-card-row">
                         <div>
-                            <div class="uname">${icon} ${label}</div>
-                            <div class="urole">Deleted by ${escapeHtml(t.deletedBy)} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
+                            <div class="uname">${t.type === 'product' ? '📦' : '🧾'} ${label}</div>
+                            <div class="urole">Deleted by ${t.deletedBy} · ${new Date(t.deletedAt).toLocaleString()} · ${daysLeft} day(s) left</div>
                         </div>
                         <div>
                             <button class="btn-small edit" onclick="restoreFromTrash('${t.id}')"><i class="fas fa-undo"></i> Restore</button>
@@ -5782,7 +5383,7 @@
                 return `
                     <div class="user-card-row">
                         <div>
-                            <div class="uname">${escapeHtml(r.userId)}</div>
+                            <div class="uname">${r.userId}</div>
                             <div class="urole">Requested ${new Date(r.createdAt).toLocaleTimeString()} · expires in ${minutesLeft} min</div>
                         </div>
                         <div style="display:flex; align-items:center; gap:10px;">
@@ -5818,89 +5419,6 @@
             loadResetRequests();
         }
 
-        // ===== ACTIVE SESSIONS (admin visibility + force-logout) =====
-        async function loadActiveSessions() {
-            const body = document.getElementById('activeSessionsBody');
-            if (!body || !hasPerm('admin')) return;
-
-            if (!supabaseConnected) {
-                body.innerHTML = '<p style="color:#999; font-size:12px;">Not connected to Supabase — session list isn\'t available offline.</p>';
-                return;
-            }
-
-            body.innerHTML = '<p style="color:#999; font-size:12px;">Loading…</p>';
-            try {
-                const { data, error } = await supabaseClient.rpc('list_active_sessions', {
-                    p_session_token: currentSessionToken
-                });
-                if (error) throw error;
-
-                body.innerHTML = (data || []).map(s => `
-                    <div class="user-card-row">
-                        <div>
-                            <div class="uname">${escapeHtml(s.user_id)}</div>
-                            <div class="urole">${escapeHtml(s.device || '')} · ${escapeHtml(s.browser || '')} · since ${new Date(s.created_at).toLocaleString()}</div>
-                        </div>
-                        <div>
-                            ${s.user_id !== DB.currentUser.id ? `<button class="btn-small del" onclick="revokeUserSession('${s.user_id}')"><i class="fas fa-sign-out-alt"></i> Force Logout</button>` : '<span style="color:#999; font-size:11px;">(you)</span>'}
-                        </div>
-                    </div>
-                `).join('') || '<p style="color:#999; font-size:12px;">No one is currently logged in.</p>';
-            } catch (e) {
-                body.innerHTML = `<p style="color:#e74c3c; font-size:12px;">Could not load sessions: ${escapeHtml(e.message || String(e))}</p>`;
-            }
-        }
-
-        async function revokeUserSession(targetUserId) {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            if (!confirm(`Force-logout "${targetUserId}"? Their next action will require logging in again.`)) return;
-
-            try {
-                const { data, error } = await supabaseClient.rpc('revoke_session', {
-                    p_session_token: currentSessionToken,
-                    p_target_user_id: targetUserId
-                });
-                if (error) throw error;
-                if (!data || !data.success) {
-                    alert(data?.error || 'Could not revoke that session.');
-                    return;
-                }
-                logAudit('session_revoked', `Force-logged-out "${targetUserId}"`);
-                loadActiveSessions();
-            } catch (e) {
-                alert('Could not revoke session: ' + (e.message || e));
-            }
-        }
-
-        // ===== RECENT CLIENT-SIDE ERRORS (admin visibility) =====
-        async function loadClientErrors() {
-            const body = document.getElementById('clientErrorsBody');
-            if (!body || !hasPerm('admin')) return;
-
-            if (!supabaseConnected) {
-                body.innerHTML = '<p style="color:#999; font-size:12px;">Not connected to Supabase — error log isn\'t available offline.</p>';
-                return;
-            }
-
-            body.innerHTML = '<p style="color:#999; font-size:12px;">Loading…</p>';
-            try {
-                const { data, error } = await supabaseClient.rpc('list_recent_client_errors', {
-                    p_session_token: currentSessionToken,
-                    p_limit: 50
-                });
-                if (error) throw error;
-
-                body.innerHTML = (data || []).map(e => `
-                    <div style="padding:6px 0; border-bottom:1px solid #f0f0f0;">
-                        <div><strong style="color:#e74c3c;">${escapeHtml(e.message)}</strong></div>
-                        <div style="color:#999; font-size:11px;">${escapeHtml(e.user_id || 'anonymous')} · ${new Date(e.occurred_at).toLocaleString()}${e.meta?.device ? ' · ' + escapeHtml(e.meta.device) : ''}${e.meta?.browser ? ' · ' + escapeHtml(e.meta.browser) : ''}</div>
-                    </div>
-                `).join('') || '<p style="color:#999; font-size:12px;">No errors recorded recently.</p>';
-            } catch (e) {
-                body.innerHTML = `<p style="color:#e74c3c; font-size:12px;">Could not load errors: ${escapeHtml(e.message || String(e))}</p>`;
-            }
-        }
-
         async function restoreFromTrash(trashId) {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
             const entry = DB.trash.find(t => String(t.id) === String(trashId));
@@ -5910,13 +5428,6 @@
                 const barcodeTaken = DB.products.find(p => p.barcode === entry.data.barcode);
                 if (barcodeTaken) {
                     alert(`Cannot restore — barcode "${entry.data.barcode}" is already used by another product. Change that product's barcode first, or edit this item's barcode before restoring.`);
-                    return;
-                }
-            }
-            if (entry.type === 'reconciliation') {
-                const dateTaken = DB.reconciliations.find(r => r.date === entry.data.date);
-                if (dateTaken) {
-                    alert(`Cannot restore — a reconciliation for ${entry.data.date} already exists. Delete that one first if you want to bring this one back.`);
                     return;
                 }
             }
@@ -5938,12 +5449,10 @@
                     alert('Could not reach shared inventory — restoring locally only. This may need manual reconciliation with other counters.');
                     if (entry.type === 'product') DB.products.push(entry.data);
                     else if (entry.type === 'sale') DB.sales.push(entry.data);
-                    else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
                 }
             } else {
                 if (entry.type === 'product') DB.products.push(entry.data);
                 else if (entry.type === 'sale') DB.sales.push(entry.data);
-                else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
             }
 
             if (entry.type === 'product') {
@@ -5953,13 +5462,11 @@
                 checkLowStock();
             } else if (entry.type === 'sale') {
                 loadReports();
-            } else if (entry.type === 'reconciliation') {
-                loadReconciliationHistory();
             }
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
+            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
             saveDB();
             alert('✓ Restored successfully');
         }
@@ -5989,7 +5496,7 @@
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
+            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : entry.data.invoiceNo}`);
             saveDB();
         }
 
@@ -6217,7 +5724,7 @@
         }
 
         async function saveCashReconciliation() {
-            if (!hasPerm('reconcile_cash') && !hasPerm('admin')) { alert('Cash reconciliation access required'); return; }
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
 
             const dateStr = document.getElementById('reconcileDate').value;
             if (!dateStr) {
@@ -6299,48 +5806,10 @@
                         <td>৳${r.expectedTotal.toFixed(2)}</td>
                         <td>৳${r.counted.toFixed(2)}</td>
                         <td style="color:${diffColor}; font-weight:600;">৳${r.difference.toFixed(2)}</td>
-                        <td style="font-size:11px;">${escapeHtml(r.reconciledBy)}</td>
-                        <td>${hasPerm('admin') ? `<button class="btn-delete-product" onclick="deleteReconciliation(${r.id})" title="Delete this entry — e.g. if it was entered for the wrong date or with wrong figures"><i class="fas fa-trash"></i></button>` : ''}</td>
+                        <td style="font-size:11px;">${r.reconciledBy}</td>
                     </tr>
                 `;
-            }).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
-        }
-
-        // Removing a wrongly-entered reconciliation is admin-only regardless
-        // of who can create entries — soft-deletes into the same Trash Bin
-        // used for products/sales, so it's recoverable if removed by mistake.
-        async function deleteReconciliation(reconId) {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            const entry = DB.reconciliations.find(r => r.id === reconId);
-            if (!entry) return;
-            if (!confirm(`Delete the reconciliation for ${entry.date}? It'll move to Trash and can be restored from there if this was a mistake.`)) return;
-
-            const trashId = 'recon_' + reconId;
-
-            if (supabaseConnected) {
-                try {
-                    const { data, error } = await supabaseClient.rpc('delete_reconciliation_safe', {
-                        p_session_token: currentSessionToken,
-                        p_recon_id: reconId,
-                        p_trash_id: trashId
-                    });
-                    if (error) throw error;
-                    if (!data || !data.success) {
-                        alert(data?.error || 'Delete was rejected by the server.');
-                        return;
-                    }
-                } catch (e) {
-                    console.error('Server-side reconciliation delete failed, applying locally only', e);
-                    alert('Could not reach shared inventory — deleting locally only. This may need manual reconciliation with other counters.');
-                }
-            }
-
-            DB.trash.push({ id: trashId, type: 'reconciliation', deletedAt: Date.now(), deletedBy: DB.currentUser.id, data: entry });
-            DB.reconciliations = DB.reconciliations.filter(r => r.id !== reconId);
-            saveDB();
-            logAudit('reconciliation_deleted', `Deleted reconciliation for ${entry.date} (moved to trash)`);
-            loadReconciliationHistory();
-            loadTrashBin();
+            }).join('') || '<tr><td colspan="5" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
         }
 
         // ===== CSV / EXCEL EXPORT =====
@@ -6363,22 +5832,7 @@
             URL.revokeObjectURL(url);
         }
 
-        // Same "array of rows, first row is headers" shape as downloadCSV,
-        // just written out as a real .xlsx via SheetJS instead of plain text —
-        // useful when the destination is Excel and formatting/column widths
-        // matter more than universal compatibility.
-        function downloadExcel(filename, rows, sheetName) {
-            if (typeof XLSX === 'undefined') {
-                alert('Excel export library did not load — check your internet connection and try again.');
-                return;
-            }
-            const worksheet = XLSX.utils.aoa_to_sheet(rows);
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, sheetName || 'Sheet1');
-            XLSX.writeFile(workbook, filename);
-        }
-
-        function buildSalesExportRows() {
+        function exportSalesCSV() {
             const rows = [['Invoice No', 'Date', 'Items', 'Subtotal', 'Discount', 'Amount', 'Refunded', 'Payment Method', 'Transaction ID', 'Cashier', 'Status']];
             DB.sales.forEach(s => {
                 rows.push([
@@ -6395,20 +5849,11 @@
                     s.status || 'completed'
                 ]);
             });
-            return rows;
-        }
-
-        function exportSalesCSV() {
-            downloadCSV(`sales_export_${new Date().toISOString().slice(0,10)}.csv`, buildSalesExportRows());
+            downloadCSV(`sales_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', 'Exported sales CSV');
         }
 
-        function exportSalesExcel() {
-            downloadExcel(`sales_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildSalesExportRows(), 'Sales');
-            logAudit('export', 'Exported sales Excel');
-        }
-
-        function buildStockExportRows() {
+        function exportStockCSV() {
             const rows = [['Name', 'Barcode', 'Unit', 'Price', 'Stock', 'Status']];
             DB.products.forEach(p => {
                 rows.push([
@@ -6420,38 +5865,18 @@
                     p.stock <= DB.settings.lowStockThreshold ? 'Low Stock' : 'OK'
                 ]);
             });
-            return rows;
-        }
-
-        function exportStockCSV() {
-            downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, buildStockExportRows());
+            downloadCSV(`stock_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', 'Exported stock CSV');
-        }
-
-        function exportStockExcel() {
-            downloadExcel(`stock_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildStockExportRows(), 'Stock');
-            logAudit('export', 'Exported stock Excel');
-        }
-
-        function buildAuditLogExportRows() {
-            const rows = [['Date/Time', 'User', 'Role', 'Device', 'Browser', 'Action', 'Details']];
-            DB.auditLog.forEach(a => {
-                const m = a.meta || {};
-                rows.push([a.time, a.user, m.role || '', m.device || '', m.browser || '', a.action.replace(/_/g, ' '), a.details || '']);
-            });
-            return rows;
         }
 
         function exportAuditLogCSV() {
             if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, buildAuditLogExportRows());
+            const rows = [['Date/Time', 'User', 'Action', 'Details']];
+            DB.auditLog.forEach(a => {
+                rows.push([a.time, a.user, a.action.replace(/_/g, ' '), a.details || '']);
+            });
+            downloadCSV(`audit_log_export_${new Date().toISOString().slice(0,10)}.csv`, rows);
             logAudit('export', `Exported full audit log (${DB.auditLog.length} entries)`);
-        }
-
-        function exportAuditLogExcel() {
-            if (!hasPerm('admin')) { alert('Admin access required'); return; }
-            downloadExcel(`audit_log_export_${new Date().toISOString().slice(0,10)}.xlsx`, buildAuditLogExportRows(), 'Audit Log');
-            logAudit('export', `Exported full audit log to Excel (${DB.auditLog.length} entries)`);
         }
 
         // Ensure login page reflects current branding settings immediately on load
