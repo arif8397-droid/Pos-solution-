@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -1634,6 +1635,13 @@
                                 <label>Footer Note</label>
                                 <input type="text" id="invoiceFooter" placeholder="Thank you for shopping with us!" oninput="applyInvoiceSettings()">
                             </div>
+                            <div class="form-field" style="margin-bottom: 12px; max-width: 220px;">
+                                <label>QR Code on Invoice</label>
+                                <select id="showInvoiceQR" onchange="applyInvoiceSettings()">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
                             <button type="button" class="btn-add-product" onclick="previewSampleInvoice()">
                                 <i class="fas fa-eye"></i> Preview Sample Invoice
                             </button>
@@ -2125,7 +2133,8 @@
                 invoicePrefix: 'INV',
                 invoiceFooter: 'Thank you for shopping with us!',
                 showTax: false,
-                taxPercent: 0
+                taxPercent: 0,
+                showInvoiceQR: true
             }
         };
 
@@ -2896,6 +2905,29 @@
             } else {
                 document.getElementById('errorMsg').textContent = 'Invalid credentials';
                 document.getElementById('errorMsg').style.display = 'block';
+
+                // A wrong password typed here was only ever checked against the
+                // LOCAL copy, so it never reached create_session — meaning
+                // repeated guesses at this screen never counted toward the
+                // server-side lockout at all. Report it too (best-effort,
+                // fire-and-forget) so brute-forcing at the actual login form is
+                // covered by the same lockout as direct API attempts.
+                if (supabaseClient && userId) {
+                    const { device, browser } = detectDeviceBrowser();
+                    supabaseClient.rpc('create_session', {
+                        p_user_id: userId,
+                        p_password_hash: hashPassword(password),
+                        p_device: device,
+                        p_browser: browser
+                    }).then(
+                        ({ data }) => {
+                            if (data?.error && /too many failed attempts/i.test(data.error)) {
+                                document.getElementById('errorMsg').textContent = data.error;
+                            }
+                        },
+                        () => {}
+                    );
+                }
             }
         }
 
@@ -3151,6 +3183,7 @@
             document.getElementById('invoiceFooter').value = DB.settings.invoiceFooter;
             document.getElementById('showTax').value = String(DB.settings.showTax);
             document.getElementById('taxPercent').value = DB.settings.taxPercent;
+            document.getElementById('showInvoiceQR').value = String(DB.settings.showInvoiceQR !== false);
         }
 
         // ===== INVOICE CUSTOMIZATION (ADMIN) =====
@@ -3164,6 +3197,7 @@
             DB.settings.invoiceFooter = document.getElementById('invoiceFooter').value;
             DB.settings.showTax = document.getElementById('showTax').value === 'true';
             DB.settings.taxPercent = parseFloat(document.getElementById('taxPercent').value) || 0;
+            DB.settings.showInvoiceQR = document.getElementById('showInvoiceQR').value === 'true';
             saveDB();
         }
 
@@ -5122,7 +5156,31 @@
                     ` : ''}
                 </div>
                 ${s.invoiceFooter ? `<div class="invoice-footer-note">${escapeHtml(s.invoiceFooter)}</div>` : ''}
+                ${s.showInvoiceQR !== false ? '<div id="invoiceQRCode" style="display:flex; justify-content:center; margin-top:12px;"></div>' : ''}
             `;
+
+            if (s.showInvoiceQR !== false) {
+                const qrContainer = document.getElementById('invoiceQRCode');
+                if (qrContainer && typeof QRCode !== 'undefined') {
+                    qrContainer.innerHTML = '';
+                    // Encodes a compact plain-text summary rather than a URL — there's
+                    // no hosted "view your receipt" page for this to link to, so a
+                    // scan just shows the same details already on the printed paper,
+                    // useful for quickly confirming/archiving a receipt on a phone
+                    // without typing anything.
+                    const qrText = `Invoice: ${sale.invoiceNo || sale.id}\nDate: ${sale.date}\nAmount: BDT ${grandTotal.toFixed(2)}\nCashier: ${sale.cashier}`;
+                    try {
+                        new QRCode(qrContainer, {
+                            text: qrText,
+                            width: 100,
+                            height: 100,
+                            correctLevel: QRCode.CorrectLevel.M
+                        });
+                    } catch (e) {
+                        console.error('QR code generation failed', e);
+                    }
+                }
+            }
 
             currentPrintMode = 'invoice';
             document.getElementById('invoiceModal').classList.add('active');
