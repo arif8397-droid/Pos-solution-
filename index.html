@@ -980,7 +980,6 @@
             <div style="text-align:center; margin-top:12px;">
                 <a href="#" onclick="openRecoveryModal(); return false;" style="font-size:12px; color:#185FA5; text-decoration:none;">Forgot password?</a>
             </div>
-            <div style="text-align:center; margin-top:16px; font-size:10px; color:#ccc;">Build: 2026-07-06-c</div>
         </div>
     </div>
 
@@ -2844,7 +2843,12 @@
             // rejected request (network drop mid-write) doesn't surface as an
             // unhandled promise rejection; it's already handled by falling
             // back to the local-only copy above.
-            if (supabaseConnected) {
+            // Deliberately checks `supabaseClient` here, not `supabaseConnected` —
+            // the latter only becomes true after a full post-login sync, but some
+            // calls (e.g. a failed login attempt) happen before that ever exists.
+            // The client object itself is created at page load regardless of
+            // login state, so this reaches the server in both cases.
+            if (supabaseClient) {
                 supabaseClient.rpc('write_audit_log', {
                     p_entry_id: entryId,
                     p_session_token: userId === 'system' ? null : currentSessionToken,
@@ -2976,6 +2980,13 @@
                         // counted this time, same as any other offline action.
                     }
                 }
+
+                // Record the attempt in the audit log too — logged as "system"
+                // (not attributed to the account that was guessed) since this
+                // is an unauthenticated request; only a verified session should
+                // ever be able to attribute an entry to a real user. The target
+                // username still goes in the details text for admin visibility.
+                logAudit('login_failed', `Failed login attempt for "${userId}"`);
             }
         }
 
