@@ -2760,7 +2760,8 @@
                     // directly — everything else (network hiccup, etc.) just
                     // silently falls back to local-only mode as before.
                     if (data?.error && /too many failed attempts/i.test(data.error)) {
-                        alert(data.error);
+                        const mins = data.locked_until ? Math.ceil((new Date(data.locked_until) - Date.now()) / 60000) : null;
+                        alert(mins !== null ? `Too many failed attempts. Try again in about ${mins} minute(s).` : data.error);
                     }
                     return;
                 }
@@ -2796,6 +2797,35 @@
         // call, and this app doesn't proxy requests through its own server.
         // Shared by getAuditMeta() and session creation — not exhaustive
         // UA sniffing, just enough to label "roughly what this is."
+        let lockoutCountdownInterval = null;
+
+        // Shows a live, ticking countdown in the user's own local time zone,
+        // instead of a static server-time string that never updates. Takes
+        // the raw ISO timestamp the server returned for locked_until.
+        function startLockoutCountdown(lockedUntilIso, elementId) {
+            if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const lockedUntil = new Date(lockedUntilIso).getTime();
+
+            const tick = () => {
+                const remainingMs = lockedUntil - Date.now();
+                if (remainingMs <= 0) {
+                    clearInterval(lockoutCountdownInterval);
+                    lockoutCountdownInterval = null;
+                    el.textContent = 'You can try again now.';
+                    return;
+                }
+                const totalSeconds = Math.ceil(remainingMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                el.textContent = `Too many failed attempts. Try again in ${minutes}:${String(seconds).padStart(2, '0')}.`;
+            };
+
+            tick();
+            lockoutCountdownInterval = setInterval(tick, 1000);
+        }
+
         function detectDeviceBrowser() {
             const ua = navigator.userAgent || '';
             const isMobile = /Mobi|Android|iPhone|iPad/i.test(ua);
@@ -2919,8 +2949,12 @@
                             p_browser: browser
                         });
                         if (data && data.success === false && /too many failed attempts/i.test(data.error || '')) {
-                            document.getElementById('errorMsg').textContent = data.error;
                             document.getElementById('errorMsg').style.display = 'block';
+                            if (data.locked_until) {
+                                startLockoutCountdown(data.locked_until, 'errorMsg');
+                            } else {
+                                document.getElementById('errorMsg').textContent = data.error;
+                            }
                             return;
                         }
                         if (data && data.success) {
@@ -2973,7 +3007,11 @@
                             p_browser: browser
                         });
                         if (data?.error && /too many failed attempts/i.test(data.error)) {
-                            document.getElementById('errorMsg').textContent = data.error;
+                            if (data.locked_until) {
+                                startLockoutCountdown(data.locked_until, 'errorMsg');
+                            } else {
+                                document.getElementById('errorMsg').textContent = data.error;
+                            }
                         }
                     } catch (e) {
                         // Couldn't reach the server — the attempt just isn't
@@ -3148,6 +3186,9 @@
             }
             currentSessionToken = null;
 
+            if (DB.currentUser) {
+                logAudit('logout', `${DB.currentUser.id} logged out`);
+            }
             DB.currentUser = null;
             cart = [];
             stopSessionTimeoutTracking();
@@ -3500,8 +3541,17 @@
                     });
                     if (error) throw error;
                     if (!data || !data.success) {
-                        errorBox.textContent = data?.error || 'That code is invalid, already used, or has expired. Request a new one.';
                         errorBox.style.display = 'block';
+                        if (data?.locked_until && /too many failed attempts/i.test(data.error || '')) {
+                            startLockoutCountdown(data.locked_until, 'recoveryError');
+                        } else {
+                            errorBox.textContent = data?.error || 'That code is invalid, already used, or has expired. Request a new one.';
+                        }
+                        // Logged as "system", same reasoning as failed logins — an
+                        // unauthenticated code-guess shouldn't be able to attribute
+                        // an entry to a real user, but the target is still useful
+                        // for an admin to see repeated attempts against one account.
+                        logAudit('password_reset_failed', `Failed password reset attempt for "${userId}"`);
                         return;
                     }
 
@@ -3511,6 +3561,7 @@
                     if (localUser) localUser.password = newPasswordHash;
                     DB.resetRequests = DB.resetRequests.filter(r => !(r.userId === userId && r.code === enteredCode));
                     saveDB();
+                    logAudit('password_recovered', `Password for "${userId}" was reset using one-time code`);
                     closeRecoveryModal();
                     alert(`✓ Password for "${userId}" has been reset. You can log in now with the new password.`);
                     return;
