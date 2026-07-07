@@ -980,7 +980,7 @@
             <div style="text-align:center; margin-top:12px;">
                 <a href="#" onclick="openRecoveryModal(); return false;" style="font-size:12px; color:#185FA5; text-decoration:none;">Forgot password?</a>
             </div>
-            <div style="text-align:center; margin-top:16px; font-size:10px; color:#ccc;">Build: 2026-07-06-a</div>
+            <div style="text-align:center; margin-top:16px; font-size:10px; color:#ccc;">Build: 2026-07-06-c</div>
         </div>
     </div>
 
@@ -1636,12 +1636,18 @@
                                 <label>Footer Note</label>
                                 <input type="text" id="invoiceFooter" placeholder="Thank you for shopping with us!" oninput="applyInvoiceSettings()">
                             </div>
-                            <div class="form-field" style="margin-bottom: 12px; max-width: 220px;">
-                                <label>QR Code on Invoice</label>
-                                <select id="showInvoiceQR" onchange="applyInvoiceSettings()">
-                                    <option value="true">Yes</option>
-                                    <option value="false">No</option>
-                                </select>
+                            <div class="form-grid" style="grid-template-columns: 220px 1fr; align-items: end;">
+                                <div class="form-field">
+                                    <label>QR Code on Invoice</label>
+                                    <select id="showInvoiceQR" onchange="applyInvoiceSettings()">
+                                        <option value="true">Yes</option>
+                                        <option value="false">No</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>QR Code Link (optional)</label>
+                                    <input type="text" id="invoiceQRLink" placeholder="https://facebook.com/yourshop — leave blank to show receipt details instead" oninput="applyInvoiceSettings()">
+                                </div>
                             </div>
                             <button type="button" class="btn-add-product" onclick="previewSampleInvoice()">
                                 <i class="fas fa-eye"></i> Preview Sample Invoice
@@ -2135,7 +2141,8 @@
                 invoiceFooter: 'Thank you for shopping with us!',
                 showTax: false,
                 taxPercent: 0,
-                showInvoiceQR: true
+                showInvoiceQR: true,
+                invoiceQRLink: ''
             }
         };
 
@@ -2879,7 +2886,7 @@
             return !!(DB.currentUser && DB.currentUser.permissions.includes(perm));
         }
 
-        function handleLogin(event) {
+        async function handleLogin(event) {
             event.preventDefault();
             const userId = document.getElementById('loginId').value;
             const password = document.getElementById('loginPass').value;
@@ -2887,6 +2894,43 @@
             const check = user ? verifyPassword(password, user.password) : { valid: false };
 
             if (user && check.valid) {
+                // A correct LOCAL password isn't enough on its own — if this
+                // account is currently locked out server-side (from repeated
+                // failed attempts, whether typed here or via a direct API call),
+                // a correct password shouldn't bypass that. Check first, and
+                // only proceed to actually reveal the app if not locked (or if
+                // the server can't be reached at all, in which case this falls
+                // back to local-only login same as always — we can't enforce a
+                // check we have no way to perform).
+                if (supabaseClient) {
+                    try {
+                        const { device, browser } = detectDeviceBrowser();
+                        // At this point user.password is still whatever's stored —
+                        // the OLD hash if an upgrade is pending, since that rewrite
+                        // happens further below, after this check.
+                        const { data } = await supabaseClient.rpc('create_session', {
+                            p_user_id: user.id,
+                            p_password_hash: user.password,
+                            p_device: device,
+                            p_browser: browser
+                        });
+                        if (data && data.success === false && /too many failed attempts/i.test(data.error || '')) {
+                            document.getElementById('errorMsg').textContent = data.error;
+                            document.getElementById('errorMsg').style.display = 'block';
+                            return;
+                        }
+                        if (data && data.success) {
+                            // Already have a valid session from this exact check —
+                            // establishSupabaseSession() will simply reuse/refresh
+                            // it moments later inside initializeApp().
+                            currentSessionToken = data.token;
+                        }
+                    } catch (e) {
+                        // Couldn't reach the server at all — fall through to
+                        // local-only login, same as this app has always done offline.
+                    }
+                }
+
                 if (check.needsUpgrade) {
                     // Correct password on an old-format hash — move it onto the
                     // stronger algorithm now, transparently. establishSupabaseSession()
@@ -2910,24 +2954,27 @@
                 // A wrong password typed here was only ever checked against the
                 // LOCAL copy, so it never reached create_session — meaning
                 // repeated guesses at this screen never counted toward the
-                // server-side lockout at all. Report it too (best-effort,
-                // fire-and-forget) so brute-forcing at the actual login form is
-                // covered by the same lockout as direct API attempts.
+                // server-side lockout at all. Report it too, and AWAIT it (not
+                // fire-and-forget) — otherwise if the correct password is typed
+                // right after, that check could run before this one finished
+                // updating the lockout counter, letting a correct password
+                // through a lockout that hadn't been recorded yet.
                 if (supabaseClient && userId) {
-                    const { device, browser } = detectDeviceBrowser();
-                    supabaseClient.rpc('create_session', {
-                        p_user_id: userId,
-                        p_password_hash: hashPassword(password),
-                        p_device: device,
-                        p_browser: browser
-                    }).then(
-                        ({ data }) => {
-                            if (data?.error && /too many failed attempts/i.test(data.error)) {
-                                document.getElementById('errorMsg').textContent = data.error;
-                            }
-                        },
-                        () => {}
-                    );
+                    try {
+                        const { device, browser } = detectDeviceBrowser();
+                        const { data } = await supabaseClient.rpc('create_session', {
+                            p_user_id: userId,
+                            p_password_hash: hashPassword(password),
+                            p_device: device,
+                            p_browser: browser
+                        });
+                        if (data?.error && /too many failed attempts/i.test(data.error)) {
+                            document.getElementById('errorMsg').textContent = data.error;
+                        }
+                    } catch (e) {
+                        // Couldn't reach the server — the attempt just isn't
+                        // counted this time, same as any other offline action.
+                    }
                 }
             }
         }
@@ -3185,6 +3232,7 @@
             document.getElementById('showTax').value = String(DB.settings.showTax);
             document.getElementById('taxPercent').value = DB.settings.taxPercent;
             document.getElementById('showInvoiceQR').value = String(DB.settings.showInvoiceQR !== false);
+            document.getElementById('invoiceQRLink').value = DB.settings.invoiceQRLink || '';
         }
 
         // ===== INVOICE CUSTOMIZATION (ADMIN) =====
@@ -3199,6 +3247,7 @@
             DB.settings.showTax = document.getElementById('showTax').value === 'true';
             DB.settings.taxPercent = parseFloat(document.getElementById('taxPercent').value) || 0;
             DB.settings.showInvoiceQR = document.getElementById('showInvoiceQR').value === 'true';
+            DB.settings.invoiceQRLink = document.getElementById('invoiceQRLink').value.trim();
             saveDB();
         }
 
@@ -5169,7 +5218,13 @@
                     // scan just shows the same details already on the printed paper,
                     // useful for quickly confirming/archiving a receipt on a phone
                     // without typing anything.
-                    const qrText = `Invoice: ${sale.invoiceNo || sale.id}\nDate: ${sale.date}\nAmount: BDT ${grandTotal.toFixed(2)}\nCashier: ${sale.cashier}`;
+                    // If the admin set a link (e.g. Facebook page, feedback form,
+                    // WhatsApp), encode that instead — otherwise fall back to a
+                    // plain-text receipt summary, since there's no hosted "view
+                    // your receipt" page for this app to link to by default.
+                    const qrText = (s.invoiceQRLink && s.invoiceQRLink.trim())
+                        ? s.invoiceQRLink.trim()
+                        : `Invoice: ${sale.invoiceNo || sale.id}\nDate: ${sale.date}\nAmount: BDT ${grandTotal.toFixed(2)}\nCashier: ${sale.cashier}`;
                     try {
                         new QRCode(qrContainer, {
                             text: qrText,
