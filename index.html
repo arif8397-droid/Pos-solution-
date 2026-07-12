@@ -1307,6 +1307,44 @@
                     </div>
 
                     <div class="admin-card" style="margin-bottom: 20px;">
+                        <h4><i class="fas fa-hand-holding-usd"></i> Cash Drawer Adjustments</h4>
+                        <p style="font-size:12px; color:#666; margin-bottom:12px;">
+                            Record any cash that leaves or enters the drawer outside a normal sale — an employee advance, a shop emergency expense, an owner withdrawal, or topping the float back up. Reconciliation below automatically accounts for these, so a legitimate withdrawal doesn't show up as an unexplained shortage.
+                        </p>
+                        <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; align-items:end;">
+                            <div class="form-field">
+                                <label>Type</label>
+                                <select id="cashAdjType">
+                                    <option value="out">Cash Out (withdrawal)</option>
+                                    <option value="in">Cash In (deposit/top-up)</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label>Amount (৳)</label>
+                                <input type="number" id="cashAdjAmount" min="0" step="0.01" placeholder="0.00">
+                            </div>
+                            <div class="form-field">
+                                <label>Reason</label>
+                                <select id="cashAdjCategory">
+                                    <option value="employee_advance">Employee Advance</option>
+                                    <option value="shop_expense">Shop Expense / Emergency</option>
+                                    <option value="owner_withdrawal">Owner Withdrawal</option>
+                                    <option value="float_topup">Float Top-up</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-field" style="margin-bottom: 10px;">
+                            <label>Note (optional)</label>
+                            <input type="text" id="cashAdjNote" placeholder="e.g. Rahim — advance against next week's salary">
+                        </div>
+                        <button type="button" class="btn-add-product" onclick="recordCashAdjustment()"><i class="fas fa-plus"></i> Record</button>
+
+                        <h5 style="color:#185FA5; margin-top:18px; margin-bottom:8px; font-size:13px;">Today's Adjustments</h5>
+                        <div id="cashAdjustmentsBody"></div>
+                    </div>
+
+                    <div class="admin-card" style="margin-bottom: 20px;">
                         <h4><i class="fas fa-money-bill-wave"></i> Cash Reconciliation</h4>
                         <p style="font-size:12px; color:#666; margin-bottom:12px;">
                             Count the physical cash drawer at closing and record it here. This compares what's actually in the drawer against what the till expected from cash sales for the date you pick.
@@ -1317,8 +1355,8 @@
                                 <input type="date" id="reconcileDate">
                             </div>
                             <div class="form-field">
-                                <label>Opening Float (৳, optional)</label>
-                                <input type="number" id="reconcileOpeningFloat" min="0" step="0.01" placeholder="0.00" oninput="updateReconcilePreview()">
+                                <label>Opening Float (৳)</label>
+                                <input type="number" id="reconcileOpeningFloat" min="0" step="0.01" placeholder="Auto-fills from yesterday's count" oninput="updateReconcilePreview()">
                             </div>
                             <button type="button" class="btn-edit" onclick="setReconcileToday()">Today</button>
                         </div>
@@ -1340,6 +1378,7 @@
                                     <tr>
                                         <th>Date</th>
                                         <th>Expected Cash</th>
+                                        <th>Adjustments</th>
                                         <th>Counted</th>
                                         <th>Difference</th>
                                         <th>By</th>
@@ -1913,6 +1952,7 @@
             restock_purchase: 'Restock / Record Purchases',
             view_reports: 'View Reports',
             reconcile_cash: 'Cash Drawer Reconciliation',
+            cash_withdrawal: 'Record Cash Withdrawals/Deposits',
             admin: 'Full Admin Access'
         };
 
@@ -2123,6 +2163,7 @@
             resetRequests: [],
             heldSales: [],
             reconciliations: [],
+            cashAdjustments: [],
             invoiceCounter: 0,
             auditLog: [],
             settings: {
@@ -2184,6 +2225,7 @@
                         resetRequests: saved.resetRequests || [],
                         heldSales: saved.heldSales || [],
                         reconciliations: saved.reconciliations || [],
+                        cashAdjustments: saved.cashAdjustments || [],
                         invoiceCounter: saved.invoiceCounter || 0,
                         auditLog: saved.auditLog || [],
                         currentUser: null,
@@ -2207,6 +2249,7 @@
                     resetRequests: DB.resetRequests,
                     heldSales: DB.heldSales,
                     reconciliations: DB.reconciliations,
+                    cashAdjustments: DB.cashAdjustments,
                     invoiceCounter: DB.invoiceCounter,
                     auditLog: DB.auditLog,
                     settings: DB.settings
@@ -2357,15 +2400,27 @@
         function reconciliationToRow(r) {
             return {
                 id: r.id, recon_date: r.date, opening_float: r.openingFloat, expected_from_sales: r.expectedFromSales,
-                expected_total: r.expectedTotal, counted: r.counted, difference: r.difference,
+                adjustments_total: r.adjustmentsTotal || 0, expected_total: r.expectedTotal, counted: r.counted, difference: r.difference,
                 notes: r.notes || null, reconciled_by: r.reconciledBy, reconciled_at: new Date(r.reconciledAt).toISOString()
             };
         }
         function rowToReconciliation(r) {
             return {
                 id: r.id, date: r.recon_date, openingFloat: Number(r.opening_float), expectedFromSales: Number(r.expected_from_sales),
-                expectedTotal: Number(r.expected_total), counted: Number(r.counted), difference: Number(r.difference),
+                adjustmentsTotal: Number(r.adjustments_total || 0), expectedTotal: Number(r.expected_total), counted: Number(r.counted), difference: Number(r.difference),
                 notes: r.notes || '', reconciledBy: r.reconciled_by, reconciledAt: new Date(r.reconciled_at).getTime()
+            };
+        }
+        function cashAdjustmentToRow(c) {
+            return {
+                id: c.id, adjustment_date: c.date, amount: c.amount, category: c.category,
+                note: c.note || null, recorded_by: c.recordedBy, created_at: new Date(c.createdAt).toISOString()
+            };
+        }
+        function rowToCashAdjustment(r) {
+            return {
+                id: r.id, date: r.adjustment_date, amount: Number(r.amount), category: r.category,
+                note: r.note || '', recordedBy: r.recorded_by, createdAt: new Date(r.created_at).getTime()
             };
         }
         function auditToRow(a) {
@@ -2514,7 +2569,7 @@
 
             const [
                 productsRes, salesRes, usersRes, purchasesRes, trashRes,
-                resetReqRes, heldRes, reconRes, auditRes, settingsRes
+                resetReqRes, heldRes, reconRes, cashAdjRes, auditRes, settingsRes
             ] = await Promise.all([
                 supabaseClient.from('products').select('*'),
                 supabaseClient.from('sales').select('*').order('sale_date', { ascending: true }),
@@ -2524,11 +2579,12 @@
                 supabaseClient.from('reset_requests').select('*'),
                 supabaseClient.from('held_sales').select('*'),
                 supabaseClient.from('reconciliations').select('*'),
+                supabaseClient.from('cash_adjustments').select('*'),
                 supabaseClient.from('audit_log').select('*').order('log_timestamp', { ascending: true }),
                 supabaseClient.from('app_settings').select('*').eq('id', 1).maybeSingle()
             ]);
 
-            const firstError = [productsRes, salesRes, usersRes, purchasesRes, trashRes, resetReqRes, heldRes, reconRes, auditRes, settingsRes]
+            const firstError = [productsRes, salesRes, usersRes, purchasesRes, trashRes, resetReqRes, heldRes, reconRes, cashAdjRes, auditRes, settingsRes]
                 .find(r => r.error);
             if (firstError) throw firstError.error;
 
@@ -2540,6 +2596,7 @@
             if (resetReqRes.data) DB.resetRequests = resetReqRes.data.map(rowToResetRequest);
             if (heldRes.data) DB.heldSales = heldRes.data.map(rowToHeldSale);
             if (reconRes.data) DB.reconciliations = reconRes.data.map(rowToReconciliation);
+            if (cashAdjRes.data) DB.cashAdjustments = cashAdjRes.data.map(rowToCashAdjustment);
             if (auditRes.data) DB.auditLog = auditRes.data.map(rowToAudit);
             if (settingsRes.data?.settings && Object.keys(settingsRes.data.settings).length) {
                 DB.settings = Object.assign({}, DB.settings, settingsRes.data.settings);
@@ -3166,7 +3223,7 @@
             if (section === 'pos' && hasPerm('pos')) document.getElementById('barcodeInput').focus();
             if (section === 'barcode-mgmt') document.getElementById('barcodeVerifyInput').focus();
             if (section === 'admin') { loadUsersList(); refreshAdminSettingsUI(); loadAuditLog(); loadTrashBin(); loadResetRequests(); loadActiveSessions(); loadClientErrors(); }
-            if (section === 'reports') { renderSalesChart(); loadReconciliationHistory(); }
+            if (section === 'reports') { renderSalesChart(); loadReconciliationHistory(); loadCashAdjustmentsToday(); }
         }
 
         function logout() {
@@ -5934,6 +5991,9 @@
                 } else if (t.type === 'reconciliation') {
                     label = `Cash reconciliation for ${escapeHtml(t.data.date)} — ৳${(t.data.difference || 0).toFixed(2)} diff`;
                     icon = '🧮';
+                } else if (t.type === 'cash_adjustment') {
+                    label = `Cash adjustment: ${t.data.amount < 0 ? '−' : '+'}৳${Math.abs(t.data.amount || 0).toFixed(2)} (${escapeHtml(CASH_ADJ_CATEGORY_LABELS[t.data.category] || t.data.category)}) on ${escapeHtml(t.data.date)}`;
+                    icon = '🧾';
                 } else {
                     label = `Sale ${escapeHtml(t.data.invoiceNo || '')} — ৳${(t.data.amount || 0).toFixed(2)}`;
                     icon = '🧾';
@@ -6126,11 +6186,13 @@
                     if (entry.type === 'product') DB.products.push(entry.data);
                     else if (entry.type === 'sale') DB.sales.push(entry.data);
                     else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
+                    else if (entry.type === 'cash_adjustment') DB.cashAdjustments.push(entry.data);
                 }
             } else {
                 if (entry.type === 'product') DB.products.push(entry.data);
                 else if (entry.type === 'sale') DB.sales.push(entry.data);
                 else if (entry.type === 'reconciliation') DB.reconciliations.push(entry.data);
+                else if (entry.type === 'cash_adjustment') DB.cashAdjustments.push(entry.data);
             }
 
             if (entry.type === 'product') {
@@ -6142,11 +6204,14 @@
                 loadReports();
             } else if (entry.type === 'reconciliation') {
                 loadReconciliationHistory();
+            } else if (entry.type === 'cash_adjustment') {
+                loadCashAdjustmentsToday();
+                updateReconcilePreview();
             }
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
+            logAudit('trash_restored', `Restored ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : (entry.type === 'cash_adjustment' ? entry.data.id : entry.data.invoiceNo))}`);
             saveDB();
             alert('✓ Restored successfully');
         }
@@ -6176,7 +6241,7 @@
 
             DB.trash = DB.trash.filter(t => String(t.id) !== String(trashId));
             loadTrashBin();
-            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : entry.data.invoiceNo)}`);
+            logAudit('trash_purged', `Permanently deleted ${entry.type}: ${entry.type === 'product' ? entry.data.name : (entry.type === 'reconciliation' ? entry.data.date : (entry.type === 'cash_adjustment' ? entry.data.id : entry.data.invoiceNo))}`);
             saveDB();
         }
 
@@ -6374,6 +6439,13 @@
             return expectedCash;
         }
 
+        function getCashAdjustmentsForDate(dateStr) {
+            if (!dateStr) return 0;
+            return DB.cashAdjustments
+                .filter(c => c.date === dateStr)
+                .reduce((sum, c) => sum + c.amount, 0);
+        }
+
         function updateReconcilePreview() {
             const dateStr = document.getElementById('reconcileDate').value;
             const preview = document.getElementById('reconcilePreview');
@@ -6384,12 +6456,14 @@
 
             const openingFloat = parseFloat(document.getElementById('reconcileOpeningFloat').value) || 0;
             const expectedFromSales = getExpectedCashForDate(dateStr);
-            const expectedTotal = openingFloat + expectedFromSales;
+            const adjustments = getCashAdjustmentsForDate(dateStr);
+            const expectedTotal = openingFloat + expectedFromSales + adjustments;
             const counted = parseFloat(document.getElementById('reconcileCountedCash').value);
 
             let html = `
                 <div class="row"><span>Opening Float</span><span>৳ ${openingFloat.toFixed(2)}</span></div>
                 <div class="row"><span>Cash Sales (net of refunds)</span><span>৳ ${expectedFromSales.toFixed(2)}</span></div>
+                ${adjustments !== 0 ? `<div class="row"><span>Cash Adjustments${adjustments < 0 ? ' (withdrawn)' : ' (added)'}</span><span>${adjustments >= 0 ? '+' : ''}৳ ${adjustments.toFixed(2)}</span></div>` : ''}
                 <div class="row grand"><span>Expected in Drawer</span><span>৳ ${expectedTotal.toFixed(2)}</span></div>
             `;
 
@@ -6420,7 +6494,8 @@
             }
 
             const expectedFromSales = getExpectedCashForDate(dateStr);
-            const expectedTotal = openingFloat + expectedFromSales;
+            const adjustments = getCashAdjustmentsForDate(dateStr);
+            const expectedTotal = openingFloat + expectedFromSales + adjustments;
             const difference = counted - expectedTotal;
             const notes = document.getElementById('reconcileNotes').value.trim();
             const reconId = Date.now();
@@ -6433,6 +6508,7 @@
                         p_recon_date: dateStr,
                         p_opening_float: openingFloat,
                         p_expected_from_sales: expectedFromSales,
+                        p_adjustments_total: adjustments,
                         p_expected_total: expectedTotal,
                         p_counted: counted,
                         p_difference: difference,
@@ -6456,6 +6532,7 @@
                 date: dateStr,
                 openingFloat,
                 expectedFromSales,
+                adjustmentsTotal: adjustments,
                 expectedTotal,
                 counted,
                 difference,
@@ -6473,6 +6550,120 @@
                 : `✓ Reconciliation saved. Difference: ৳${difference.toFixed(2)} (${difference < 0 ? 'short' : 'over'}).`);
         }
 
+        // ===== CASH DRAWER ADJUSTMENTS (withdrawals & deposits outside a sale) =====
+        const CASH_ADJ_CATEGORY_LABELS = {
+            employee_advance: 'Employee Advance',
+            shop_expense: 'Shop Expense / Emergency',
+            owner_withdrawal: 'Owner Withdrawal',
+            float_topup: 'Float Top-up',
+            other: 'Other'
+        };
+
+        async function recordCashAdjustment() {
+            if (!hasPerm('cash_withdrawal') && !hasPerm('admin')) { alert('Cash withdrawal access required'); return; }
+
+            const type = document.getElementById('cashAdjType').value; // 'out' or 'in'
+            const rawAmount = parseFloat(document.getElementById('cashAdjAmount').value);
+            if (isNaN(rawAmount) || rawAmount <= 0) {
+                alert('Enter an amount greater than zero.');
+                return;
+            }
+            const amount = type === 'out' ? -rawAmount : rawAmount;
+            const category = document.getElementById('cashAdjCategory').value;
+            const note = document.getElementById('cashAdjNote').value.trim();
+            const dateStr = toDateInputValue(new Date());
+            const id = 'cadj_' + Date.now();
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('record_cash_adjustment', {
+                        p_session_token: currentSessionToken,
+                        p_id: id,
+                        p_adjustment_date: dateStr,
+                        p_amount: amount,
+                        p_category: category,
+                        p_note: note || null
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Could not record this — rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side cash adjustment failed, applying locally only', e);
+                    alert('Could not reach shared inventory — saving locally only.');
+                }
+            }
+
+            DB.cashAdjustments.push({
+                id, date: dateStr, amount, category, note,
+                recordedBy: DB.currentUser.id, createdAt: Date.now()
+            });
+            saveDB();
+            logAudit('cash_adjustment', `${type === 'out' ? 'Withdrew' : 'Added'} ৳${rawAmount.toFixed(2)} (${CASH_ADJ_CATEGORY_LABELS[category] || category})${note ? ' — ' + note : ''}`);
+
+            document.getElementById('cashAdjAmount').value = '';
+            document.getElementById('cashAdjNote').value = '';
+            loadCashAdjustmentsToday();
+            updateReconcilePreview();
+        }
+
+        function loadCashAdjustmentsToday() {
+            const body = document.getElementById('cashAdjustmentsBody');
+            if (!body) return;
+            const todayStr = toDateInputValue(new Date());
+            const todays = DB.cashAdjustments.filter(c => c.date === todayStr).sort((a, b) => b.createdAt - a.createdAt);
+
+            body.innerHTML = todays.map(c => `
+                <div class="user-card-row">
+                    <div>
+                        <div class="uname" style="color:${c.amount < 0 ? '#e74c3c' : '#27ae60'};">${c.amount < 0 ? '−' : '+'}৳${Math.abs(c.amount).toFixed(2)} <span style="color:#666; font-weight:400; font-size:12px;">${escapeHtml(CASH_ADJ_CATEGORY_LABELS[c.category] || c.category)}</span></div>
+                        <div class="urole">${escapeHtml(c.note || '')} ${c.note ? '·' : ''} by ${escapeHtml(c.recordedBy)}</div>
+                    </div>
+                    <div>
+                        ${hasPerm('admin') ? `<button class="btn-delete-product" onclick="deleteCashAdjustment('${c.id}')"><i class="fas fa-trash"></i></button>` : ''}
+                    </div>
+                </div>
+            `).join('') || '<p style="color:#999; font-size:12px;">No adjustments recorded today.</p>';
+        }
+
+        // Admin-only regardless of who can record — same reasoning as
+        // reconciliation deletes. Soft-deletes into Trash for recoverability.
+        async function deleteCashAdjustment(id) {
+            if (!hasPerm('admin')) { alert('Admin access required'); return; }
+            const entry = DB.cashAdjustments.find(c => c.id === id);
+            if (!entry) return;
+            if (!confirm(`Delete this ৳${Math.abs(entry.amount).toFixed(2)} adjustment? It'll move to Trash and can be restored from there if this was a mistake.`)) return;
+
+            const trashId = 'trash_' + id;
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('delete_cash_adjustment_safe', {
+                        p_session_token: currentSessionToken,
+                        p_id: id,
+                        p_trash_id: trashId
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Delete was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side cash adjustment delete failed, applying locally only', e);
+                    alert('Could not reach shared inventory — deleting locally only.');
+                }
+            }
+
+            DB.trash.push({ id: trashId, type: 'cash_adjustment', deletedAt: Date.now(), deletedBy: DB.currentUser.id, data: entry });
+            DB.cashAdjustments = DB.cashAdjustments.filter(c => c.id !== id);
+            saveDB();
+            logAudit('cash_adjustment_deleted', `Deleted a ৳${Math.abs(entry.amount).toFixed(2)} cash adjustment (moved to trash)`);
+            loadCashAdjustmentsToday();
+            updateReconcilePreview();
+            loadTrashBin();
+        }
+
         function loadReconciliationHistory() {
             const tbody = document.getElementById('reconciliationHistoryBody');
             if (!tbody) return;
@@ -6480,17 +6671,34 @@
 
             tbody.innerHTML = history.map(r => {
                 const diffColor = r.difference === 0 ? '#27ae60' : (r.difference < 0 ? '#e74c3c' : '#BA7517');
+                const adj = r.adjustmentsTotal || 0;
                 return `
                     <tr>
                         <td>${r.date}</td>
                         <td>৳${r.expectedTotal.toFixed(2)}</td>
+                        <td style="color:${adj === 0 ? '#999' : (adj < 0 ? '#e74c3c' : '#27ae60')};">${adj === 0 ? '—' : `${adj >= 0 ? '+' : ''}৳${adj.toFixed(2)}`}</td>
                         <td>৳${r.counted.toFixed(2)}</td>
                         <td style="color:${diffColor}; font-weight:600;">৳${r.difference.toFixed(2)}</td>
                         <td style="font-size:11px;">${escapeHtml(r.reconciledBy)}</td>
                         <td>${hasPerm('admin') ? `<button class="btn-delete-product" onclick="deleteReconciliation(${r.id})" title="Delete this entry — e.g. if it was entered for the wrong date or with wrong figures"><i class="fas fa-trash"></i></button>` : ''}</td>
                     </tr>
                 `;
-            }).join('') || '<tr><td colspan="6" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
+            }).join('') || '<tr><td colspan="7" style="text-align:center; color:#999;">No reconciliations recorded yet</td></tr>';
+
+            // Auto-fill today's opening float from yesterday's counted total —
+            // in almost every shop, the same physical drawer just carries over
+            // overnight, so re-typing this by hand every day is pure friction
+            // and a source of typos. Only fills an EMPTY field, and only if
+            // today doesn't already have its own entry — never silently
+            // overwrites something staff already typed or already saved.
+            const floatInput = document.getElementById('reconcileOpeningFloat');
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const alreadyDoneToday = history.some(r => r.date === todayStr);
+            if (floatInput && !floatInput.value && !alreadyDoneToday && history.length > 0) {
+                floatInput.value = history[0].counted.toFixed(2);
+                floatInput.title = `Auto-filled from ${history[0].date}'s closing count — edit if the actual drawer amount is different today.`;
+                updateReconcilePreview();
+            }
         }
 
         // Removing a wrongly-entered reconciliation is admin-only regardless
