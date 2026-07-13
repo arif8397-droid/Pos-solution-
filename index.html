@@ -1223,6 +1223,16 @@
                                         </div>
                                         <div id="emojiSuggestRow" style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;"></div>
                                     </div>
+                                    <div class="form-field" style="grid-column: 1 / -1;">
+                                        <label>Restocked In a Different Unit? (optional)</label>
+                                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                            <input type="text" id="productPurchaseUnit" placeholder="e.g. sack, carton, box" style="max-width: 160px;">
+                                            <span style="font-size:12px; color:#666;">=</span>
+                                            <input type="number" id="productPurchaseUnitQty" placeholder="e.g. 25" step="0.01" style="max-width: 100px;">
+                                            <span id="productPurchaseUnitHint" style="font-size:12px; color:#999;">selling units</span>
+                                        </div>
+                                        <div style="font-size:11px; color:#999; margin-top:4px;">Only fill this in if you buy in a bulk unit but sell loose — e.g. you restock by the sack but sell by the kg. Leave blank if you restock in the same unit you sell.</div>
+                                    </div>
                                 </div>
                                 <button type="button" class="btn-add-product" style="margin-top: 14px;" onclick="addProduct()">Add</button>
                                 <div id="emojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
@@ -1776,6 +1786,15 @@
                         <button type="button" class="btn-edit" onclick="toggleEditEmojiPicker()" title="Choose emoji"><i class="fas fa-icons"></i></button>
                     </div>
                 </div>
+                <div class="form-field" style="grid-column: 1 / -1;">
+                    <label>Restocked In a Different Unit? (optional)</label>
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <input type="text" id="editPurchaseUnit" placeholder="e.g. sack, carton, box" style="max-width: 160px;">
+                        <span style="font-size:12px; color:#666;">=</span>
+                        <input type="number" id="editPurchaseUnitQty" placeholder="e.g. 25" step="0.01" style="max-width: 100px;">
+                        <span id="editPurchaseUnitHint" style="font-size:12px; color:#999;">selling units</span>
+                    </div>
+                </div>
             </div>
             <div id="editEmojiPickerPanel" class="emoji-picker-panel hidden-banner"></div>
             <div style="display: flex; gap: 8px; margin-top: 14px;">
@@ -1872,6 +1891,14 @@
                 <button class="close-modal" onclick="closeRestockModal()">✕</button>
             </div>
             <div id="restockProductInfo" style="font-size:13px; color:#666; margin-bottom:12px;"></div>
+            <div id="restockUnitToggleField" class="form-field" style="display:none; margin-bottom:12px;">
+                <label>Restocking By</label>
+                <div class="segmented-toggle" style="max-width: 320px;">
+                    <button type="button" class="segment-btn active" id="restockUnitBtnSelling" onclick="setRestockUnitMode('selling')"></button>
+                    <button type="button" class="segment-btn" id="restockUnitBtnPurchase" onclick="setRestockUnitMode('purchase')"></button>
+                </div>
+                <input type="hidden" id="restockUnitMode" value="selling">
+            </div>
             <div class="form-grid" style="grid-template-columns: 1fr 1fr;">
                 <div class="form-field">
                     <label id="restockQtyLabel">Quantity Received</label>
@@ -2285,14 +2312,17 @@
             return {
                 id: p.id, name: p.name, barcode: p.barcode, unit: p.unit,
                 sell_mode: p.sellMode, price: p.price, cost_price: p.costPrice || 0,
-                stock: p.stock, icon: p.icon, updated_at: new Date().toISOString()
+                stock: p.stock, icon: p.icon,
+                purchase_unit: p.purchaseUnit || null, purchase_unit_qty: p.purchaseUnitQty || null,
+                updated_at: new Date().toISOString()
             };
         }
         function rowToProduct(r) {
             return {
                 id: r.id, name: r.name, barcode: r.barcode, unit: r.unit,
                 sellMode: r.sell_mode, price: Number(r.price), costPrice: Number(r.cost_price || 0),
-                stock: Number(r.stock), icon: r.icon
+                stock: Number(r.stock), icon: r.icon,
+                purchaseUnit: r.purchase_unit || null, purchaseUnitQty: r.purchase_unit_qty ? Number(r.purchase_unit_qty) : null
             };
         }
         function saleToRow(s) {
@@ -3959,6 +3989,8 @@
             const stockInput = document.getElementById('productStock');
             stockInput.step = isWeightUnit(unit) ? '0.01' : '1';
             document.getElementById('sellModeField').style.display = 'block';
+            const puHint = document.getElementById('productPurchaseUnitHint');
+            if (puHint) puHint.textContent = unit;
             onSellModeChange();
         }
 
@@ -3993,7 +4025,7 @@
             }
         }
 
-        function addProduct() {
+        async function addProduct() {
             if (!hasPerm('add_product')) {
                 alert('You don\'t have permission to add products');
                 return;
@@ -4007,6 +4039,8 @@
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseFloat(document.getElementById('productStock').value);
             const icon = document.getElementById('productIcon').value || '📦';
+            const purchaseUnit = document.getElementById('productPurchaseUnit').value.trim() || null;
+            const purchaseUnitQty = purchaseUnit ? (parseFloat(document.getElementById('productPurchaseUnitQty').value) || null) : null;
 
             if (!name || !barcode || !price) {
                 alert('Please fill all required fields');
@@ -4018,8 +4052,41 @@
                 return;
             }
 
+            if (purchaseUnit && !purchaseUnitQty) {
+                alert(`Enter how many ${unit} are in one "${purchaseUnit}" (e.g. 1 sack = 25 kg).`);
+                return;
+            }
+
             const newId = DB.products.length ? Math.max(...DB.products.map(p => p.id)) + 1 : 1;
-            DB.products.push({ id: newId, name, barcode, unit, sellMode, costPrice, price, stock, icon });
+
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('add_product_safe', {
+                        p_session_token: currentSessionToken,
+                        p_id: newId,
+                        p_name: name,
+                        p_barcode: barcode,
+                        p_unit: unit,
+                        p_sell_mode: sellMode,
+                        p_price: price,
+                        p_cost_price: costPrice,
+                        p_stock: stock,
+                        p_icon: icon,
+                        p_purchase_unit: purchaseUnit,
+                        p_purchase_unit_qty: purchaseUnitQty
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Could not add this product — rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side product add failed, applying locally only', e);
+                    alert('Could not reach shared inventory — adding locally only. This product will not appear on other counters until that syncs.');
+                }
+            }
+
+            DB.products.push({ id: newId, name, barcode, unit, sellMode, costPrice, price, stock, icon, purchaseUnit, purchaseUnitQty });
 
             document.getElementById('productName').value = '';
             document.getElementById('productBarcode').value = '';
@@ -4032,6 +4099,8 @@
             document.getElementById('productPrice').value = '';
             document.getElementById('productStock').value = '50';
             document.getElementById('productIcon').value = '📦';
+            document.getElementById('productPurchaseUnit').value = '';
+            document.getElementById('productPurchaseUnitQty').value = '';
             document.getElementById('emojiSuggestRow').innerHTML = '';
             document.getElementById('emojiPickerPanel').classList.add('hidden-banner');
 
@@ -4064,6 +4133,8 @@
             document.getElementById('editCostPrice').value = product.costPrice || 0;
             document.getElementById('editPrice').value = product.price;
             document.getElementById('editIcon').value = product.icon || '📦';
+            document.getElementById('editPurchaseUnit').value = product.purchaseUnit || '';
+            document.getElementById('editPurchaseUnitQty').value = product.purchaseUnitQty || '';
 
             const canEditStock = hasPerm('edit_stock');
             document.getElementById('editStockField').style.display = canEditStock ? 'block' : 'none';
@@ -4083,6 +4154,8 @@
             document.getElementById('editPriceLabel').textContent = `Price (৳ / ${unit})`;
             document.getElementById('editStockLabel').textContent = `Stock (${unit})`;
             document.getElementById('editStock').step = isWeightUnit(unit) ? '0.01' : '1';
+            const puHint = document.getElementById('editPurchaseUnitHint');
+            if (puHint) puHint.textContent = unit;
         }
 
         function toggleEditEmojiPicker() {
@@ -4103,7 +4176,7 @@
             document.getElementById('editEmojiPickerPanel').classList.add('hidden-banner');
         }
 
-        function savePrice() {
+        async function savePrice() {
             const product = DB.products.find(p => p.id === editingProductId);
             if (!product) return;
 
@@ -4114,6 +4187,8 @@
             const newCostPrice = parseFloat(document.getElementById('editCostPrice').value) || 0;
             const newPrice = parseFloat(document.getElementById('editPrice').value);
             const newIcon = document.getElementById('editIcon').value || '📦';
+            const newPurchaseUnit = document.getElementById('editPurchaseUnit').value.trim() || null;
+            const newPurchaseUnitQty = newPurchaseUnit ? (parseFloat(document.getElementById('editPurchaseUnitQty').value) || null) : null;
 
             if (!newName) {
                 alert('Product name cannot be empty');
@@ -4137,6 +4212,10 @@
                     return;
                 }
             }
+            if (newPurchaseUnit && !newPurchaseUnitQty) {
+                alert(`Enter how many ${newUnit} are in one "${newPurchaseUnit}" (e.g. 1 sack = 25 kg).`);
+                return;
+            }
             if (product.unit !== newUnit) {
                 const confirmed = confirm(
                     `Changing unit from "${product.unit}" to "${newUnit}" will NOT convert the stock number — ` +
@@ -4154,6 +4233,32 @@
             if ((product.costPrice || 0) !== newCostPrice) changes.push(`cost price ৳${product.costPrice || 0} → ৳${newCostPrice}`);
             if (product.price !== newPrice) changes.push(`price ৳${product.price} → ৳${newPrice}`);
 
+            if (supabaseConnected) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('update_product_details', {
+                        p_session_token: currentSessionToken,
+                        p_id: product.id,
+                        p_name: newName,
+                        p_barcode: newBarcode,
+                        p_unit: newUnit,
+                        p_sell_mode: newSellMode,
+                        p_price: newPrice,
+                        p_cost_price: newCostPrice,
+                        p_icon: newIcon,
+                        p_purchase_unit: newPurchaseUnit,
+                        p_purchase_unit_qty: newPurchaseUnitQty
+                    });
+                    if (error) throw error;
+                    if (!data || !data.success) {
+                        alert(data?.error || 'Update was rejected by the server.');
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Server-side product update failed, applying locally only', e);
+                    alert('Could not reach shared inventory — updating locally only. Other counters will not see this change until that syncs.');
+                }
+            }
+
             product.name = newName;
             product.barcode = newBarcode;
             product.unit = newUnit;
@@ -4161,12 +4266,27 @@
             product.costPrice = newCostPrice;
             product.price = newPrice;
             product.icon = newIcon;
+            product.purchaseUnit = newPurchaseUnit;
+            product.purchaseUnitQty = newPurchaseUnitQty;
 
             if (hasPerm('edit_stock')) {
                 const newStock = parseFloat(document.getElementById('editStock').value);
                 if (!isNaN(newStock) && newStock >= 0) {
                     const rounded = Math.round(newStock * 1000) / 1000;
-                    if (product.stock !== rounded) changes.push(`stock ${product.stock} → ${rounded} ${newUnit}`);
+                    if (product.stock !== rounded) {
+                        changes.push(`stock ${product.stock} → ${rounded} ${newUnit}`);
+                        // Stock changes already have their own dedicated,
+                        // audit-tracked sync path — reuse it rather than
+                        // folding stock into update_product_details.
+                        if (supabaseConnected) {
+                            supabaseClient.rpc('update_stock', {
+                                p_session_token: currentSessionToken,
+                                p_product_id: product.id,
+                                p_new_stock: rounded,
+                                p_reason: 'manual_correction'
+                            }).then(() => {}, () => {});
+                        }
+                    }
                     product.stock = rounded;
                 }
             }
@@ -4243,8 +4363,20 @@
 
             document.getElementById('restockProductInfo').innerHTML =
                 `${product.icon} <strong>${product.name}</strong><br>Current stock: ${formatQty(product.stock, product.unit)} ${product.unit} · Last cost: ৳${(product.costPrice || 0).toFixed(2)}/${product.unit}`;
-            document.getElementById('restockQtyLabel').textContent = `Quantity Received (${product.unit})`;
-            document.getElementById('restockCostLabel').textContent = `Cost Price (৳ / ${product.unit})`;
+
+            const toggleField = document.getElementById('restockUnitToggleField');
+            if (product.purchaseUnit && product.purchaseUnitQty) {
+                toggleField.style.display = 'block';
+                document.getElementById('restockUnitBtnSelling').textContent = `By the ${product.unit}`;
+                document.getElementById('restockUnitBtnPurchase').textContent = `By the ${product.purchaseUnit} (1 = ${product.purchaseUnitQty} ${product.unit})`;
+                setRestockUnitMode('selling');
+            } else {
+                toggleField.style.display = 'none';
+                document.getElementById('restockUnitMode').value = 'selling';
+                document.getElementById('restockQtyLabel').textContent = `Quantity Received (${product.unit})`;
+                document.getElementById('restockCostLabel').textContent = `Cost Price (৳ / ${product.unit})`;
+            }
+
             document.getElementById('restockQtyInput').value = '';
             document.getElementById('restockQtyInput').step = isWeightUnit(product.unit) ? '0.01' : '1';
             document.getElementById('restockCostInput').value = product.costPrice || '';
@@ -4255,6 +4387,48 @@
             document.getElementById('restockQtyInput').focus();
         }
 
+        // Toggles between restocking in the product's normal SELLING unit
+        // (e.g. kg) or its bulk PURCHASE unit (e.g. sack) — only shown when
+        // the product has a purchase-unit conversion defined. Switching modes
+        // just relabels the same two inputs; the actual conversion math
+        // happens in updateRestockPreview()/confirmRestock().
+        function setRestockUnitMode(mode) {
+            const product = DB.products.find(p => p.id === restockProductId);
+            if (!product) return;
+            document.getElementById('restockUnitMode').value = mode;
+            document.getElementById('restockUnitBtnSelling').classList.toggle('active', mode === 'selling');
+            document.getElementById('restockUnitBtnPurchase').classList.toggle('active', mode === 'purchase');
+
+            if (mode === 'purchase') {
+                document.getElementById('restockQtyLabel').textContent = `Quantity Received (${product.purchaseUnit})`;
+                document.getElementById('restockCostLabel').textContent = `Cost Price (৳ / ${product.purchaseUnit})`;
+                document.getElementById('restockQtyInput').step = '0.01';
+            } else {
+                document.getElementById('restockQtyLabel').textContent = `Quantity Received (${product.unit})`;
+                document.getElementById('restockCostLabel').textContent = `Cost Price (৳ / ${product.unit})`;
+                document.getElementById('restockQtyInput').step = isWeightUnit(product.unit) ? '0.01' : '1';
+            }
+            updateRestockPreview();
+        }
+
+        // Converts whatever was entered into the actual selling-unit
+        // quantity and per-selling-unit cost, regardless of which mode is
+        // active. Every other calculation in this modal uses these two
+        // values, so the conversion only has to happen in one place.
+        function getRestockInSellingUnits(product) {
+            const enteredQty = parseFloat(document.getElementById('restockQtyInput').value) || 0;
+            const enteredCost = parseFloat(document.getElementById('restockCostInput').value) || 0;
+            const mode = document.getElementById('restockUnitMode').value;
+
+            if (mode === 'purchase' && product.purchaseUnitQty) {
+                return {
+                    qty: enteredQty * product.purchaseUnitQty,
+                    costPerUnit: product.purchaseUnitQty > 0 ? enteredCost / product.purchaseUnitQty : 0
+                };
+            }
+            return { qty: enteredQty, costPerUnit: enteredCost };
+        }
+
         function closeRestockModal() {
             document.getElementById('restockModal').classList.remove('active');
             restockProductId = null;
@@ -4263,8 +4437,7 @@
         function updateRestockPreview() {
             const product = DB.products.find(p => p.id === restockProductId);
             if (!product) return;
-            const qty = parseFloat(document.getElementById('restockQtyInput').value) || 0;
-            const cost = parseFloat(document.getElementById('restockCostInput').value) || 0;
+            const { qty, costPerUnit: cost } = getRestockInSellingUnits(product);
             const preview = document.getElementById('restockPreview');
 
             if (qty <= 0) {
@@ -4285,12 +4458,12 @@
             const product = DB.products.find(p => p.id === restockProductId);
             if (!product) return;
 
-            const qty = parseFloat(document.getElementById('restockQtyInput').value);
-            const cost = parseFloat(document.getElementById('restockCostInput').value) || 0;
+            const rawQtyEntered = parseFloat(document.getElementById('restockQtyInput').value);
+            const { qty, costPerUnit: cost } = getRestockInSellingUnits(product);
             const supplier = document.getElementById('restockSupplierInput').value.trim();
             const notes = document.getElementById('restockNotesInput').value.trim();
 
-            if (!qty || qty <= 0) {
+            if (!rawQtyEntered || rawQtyEntered <= 0) {
                 alert('Enter a valid quantity received');
                 return;
             }
@@ -4303,6 +4476,10 @@
             const totalCost = roundedQty * cost;
             const oldStock = product.stock;
             const newStock = Math.round((product.stock + roundedQty) * 1000) / 1000;
+            const restockMode = document.getElementById('restockUnitMode').value;
+            const fullNotes = (restockMode === 'purchase' && product.purchaseUnit)
+                ? `Received ${rawQtyEntered} ${product.purchaseUnit} (= ${formatQty(roundedQty, product.unit)} ${product.unit})${notes ? ' — ' + notes : ''}`
+                : notes;
 
             const purchaseId = Date.now();
 
@@ -4331,7 +4508,7 @@
                         p_cost_price: cost,
                         p_total_cost: totalCost,
                         p_supplier: supplier || null,
-                        p_notes: notes || null
+                        p_notes: fullNotes || null
                     });
                     if (purchaseError) throw purchaseError;
                     if (!purchaseData || !purchaseData.success) {
@@ -4359,7 +4536,7 @@
                 costPrice: cost,
                 totalCost,
                 supplier,
-                notes,
+                notes: fullNotes,
                 addedBy: DB.currentUser ? DB.currentUser.id : 'system'
             });
 
