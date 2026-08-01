@@ -5093,6 +5093,14 @@
 
         function setQty(index, value) {
             const item = cart[index];
+            if (!item) {
+                // The cart changed (an item was removed, etc.) between when
+                // this input was drawn and when its onchange actually fired,
+                // so the index it was holding is now stale/out of bounds.
+                // Nothing to update — just get the cart back in sync.
+                updateCart();
+                return;
+            }
             const min = getMinQty(item.unit, item.sellMode);
             const parsed = parseFloat(value);
             item.quantity = Math.max(min, isNaN(parsed) ? min : Math.round(parsed * 1000) / 1000);
