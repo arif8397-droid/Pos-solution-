@@ -5355,6 +5355,31 @@
             document.getElementById('checkoutBtn').disabled = !document.getElementById('transactionIdInput').value.trim();
         }
 
+        function getDeviceTag() {
+            let t = null;
+            try { t = localStorage.getItem('pos_device_tag'); } catch (e) {}
+            if (!t) {
+                t = Math.random().toString(36).slice(2, 5).toUpperCase();
+                try { localStorage.setItem('pos_device_tag', t); } catch (e) {}
+            }
+            return t;
+        }
+
+        // Invoice numbers now come from the server (one shared sequence, no duplicates).
+        // If the server can't be reached, a device-tagged OFF number is used instead so it
+        // can never collide with a server number or another counter's number.
+        async function getNextInvoiceNo() {
+            const prefix = DB.settings.invoicePrefix || 'INV';
+            if (typeof supabaseClient !== 'undefined' && supabaseClient) {
+                try {
+                    const { data, error } = await supabaseClient.rpc('next_invoice_no', { p_prefix: prefix });
+                    if (!error && data) return data;
+                } catch (e) { /* fall through to offline number */ }
+            }
+            DB.invoiceCounter = (DB.invoiceCounter || 0) + 1;
+            return prefix + '-OFF' + getDeviceTag() + '-' + String(DB.invoiceCounter).padStart(5, '0');
+        }
+
         async function checkout() {
             if (!hasPerm('pos')) {
                 alert('POS access denied');
@@ -5381,14 +5406,13 @@
                 return;
             }
 
-            DB.invoiceCounter = (DB.invoiceCounter || 0) + 1;
-            const invoiceNo = (DB.settings.invoicePrefix || 'INV') + '-' + String(DB.invoiceCounter).padStart(5, '0');
+            const invoiceNo = await getNextInvoiceNo();
 
             const sale = {
                 id: Date.now(),
                 invoiceNo,
                 date: new Date().toLocaleString(),
-                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity, isPackedItem: !!i.isPackedItem, returnedQty: 0 })),
+                items: cart.map(i => ({ id: i.id, name: i.name, icon: i.icon, unit: i.unit || 'pcs', price: i.price, quantity: i.quantity, isPackedItem: !!i.isPackedItem, returnedQty: 0, cost_at_sale: ((DB.products.find(p => p.id === i.id) || {}).costPrice) || 0 })),
                 subtotal,
                 discountAmount,
                 amount: total,
@@ -5826,7 +5850,7 @@
                     const netQty = item.quantity - (item.returnedQty || 0);
                     if (netQty <= 0) return;
                     const product = DB.products.find(p => p.id === item.id);
-                    const cost = product ? (product.costPrice || 0) : 0;
+                    const cost = (item.cost_at_sale !== undefined && item.cost_at_sale !== null) ? item.cost_at_sale : (product ? (product.costPrice || 0) : 0);
                     const revenue = netQty * item.price;
                     const cogs = netQty * cost;
 
